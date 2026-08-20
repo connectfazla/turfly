@@ -17,12 +17,7 @@
  */
 import { Prisma, type Booking, type BookingSource } from '@prisma/client';
 import { prisma } from './prisma';
-import {
-  getDayAvailability,
-  type AvailabilityBlackout,
-  type AvailabilityBooking,
-  type AvailabilitySlotRule,
-} from './availability';
+import { dateOnly, fetchDayAvailability } from './availability-service';
 import { assertValidSlotIndex, hasSlotStarted, slotStart, type SlotIndex } from './slots';
 
 type Tx = Prisma.TransactionClient;
@@ -136,10 +131,6 @@ async function runSerializable<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   throw new SlotTakenError();
 }
 
-function dateOnly(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
 // ---------------------------------------------------------------- shared helpers
 
 /** Frees expired holds so they stop occupying the partial unique index.
@@ -149,57 +140,6 @@ async function sweepExpiredHolds(tx: Tx, now: Date): Promise<void> {
     where: { status: 'HELD', holdExpiresAt: { lt: now } },
     data: { status: 'EXPIRED' },
   });
-}
-
-/** Fetches this day's rules/bookings/blackouts and runs them through the
- * one availability function. Excludes `excludeBookingId` from the "booked"
- * check — used by reschedule so a booking doesn't block its own old slot. */
-async function fetchDayAvailability(
-  tx: Tx,
-  date: Date,
-  now: Date,
-  excludeBookingId?: string,
-) {
-  const day = dateOnly(date);
-  const dayOfWeek = day.getDay();
-
-  const [slotRules, bookings, blackouts] = await Promise.all([
-    tx.slotRule.findMany({ where: { dayOfWeek } }),
-    tx.booking.findMany({
-      where: {
-        date: day,
-        id: excludeBookingId ? { not: excludeBookingId } : undefined,
-      },
-    }),
-    tx.blackout.findMany({ where: { date: day } }),
-  ]);
-
-  const availabilitySlotRules: AvailabilitySlotRule[] = slotRules.map((r) => ({
-    slotIndex: r.slotIndex,
-    isBookable: r.isBookable,
-    price: Number(r.price),
-  }));
-  const availabilityBookings: AvailabilityBooking[] = bookings.map((b) => ({
-    slotIndex: b.slotIndex,
-    status: b.status,
-    holdExpiresAt: b.holdExpiresAt,
-  }));
-  const availabilityBlackouts: AvailabilityBlackout[] = blackouts.map((b) => ({
-    slotIndex: b.slotIndex,
-  }));
-
-  return {
-    day,
-    dayOfWeek,
-    ruleByIndex: new Map(availabilitySlotRules.map((r) => [r.slotIndex, r])),
-    slots: getDayAvailability({
-      date: day,
-      now,
-      slotRules: availabilitySlotRules,
-      bookings: availabilityBookings,
-      blackouts: availabilityBlackouts,
-    }),
-  };
 }
 
 async function upsertCustomer(
