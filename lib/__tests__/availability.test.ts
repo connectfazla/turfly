@@ -109,7 +109,14 @@ describe('booked — and the "booked beats past" ordering trap', () => {
   it.each(['HELD', 'CONFIRMED', 'COMPLETED'] as const)(
     '%s bookings occupy the slot (live statuses)',
     (status) => {
-      const result = getDayAvailability(baseInput({ bookings: [{ slotIndex: 9, status }] }));
+      const now = new Date(2026, 7, 20, 0, 0);
+      const booking: AvailabilityBooking = {
+        slotIndex: 9,
+        status,
+        // Only read for status === 'HELD'; harmless for the others.
+        holdExpiresAt: new Date(2026, 7, 20, 0, 30),
+      };
+      const result = getDayAvailability(baseInput({ now, bookings: [booking] }));
       expect(result.find((s) => s.index === 9)!.state).toBe('BOOKED');
     },
   );
@@ -128,6 +135,32 @@ describe('booked — and the "booked beats past" ordering trap', () => {
     const bookings: AvailabilityBooking[] = [{ slotIndex: 2, status: 'COMPLETED' }];
     const result = getDayAvailability(baseInput({ now, bookings }));
     expect(result.find((s) => s.index === 2)!.state).toBe('BOOKED');
+  });
+});
+
+describe('HELD self-healing — a lapsed hold stops occupying its slot on read', () => {
+  it('a HELD booking with holdExpiresAt in the future is BOOKED', () => {
+    const now = new Date(2026, 7, 20, 9, 0);
+    const bookings: AvailabilityBooking[] = [
+      { slotIndex: 8, status: 'HELD', holdExpiresAt: new Date(2026, 7, 20, 9, 10) },
+    ];
+    const result = getDayAvailability(baseInput({ now, bookings }));
+    expect(result.find((s) => s.index === 8)!.state).toBe('BOOKED');
+  });
+
+  it('a HELD booking whose holdExpiresAt has passed no longer occupies the slot', () => {
+    const now = new Date(2026, 7, 20, 9, 20);
+    const bookings: AvailabilityBooking[] = [
+      { slotIndex: 8, status: 'HELD', holdExpiresAt: new Date(2026, 7, 20, 9, 10) },
+    ];
+    const result = getDayAvailability(baseInput({ now, bookings }));
+    expect(result.find((s) => s.index === 8)!.state).toBe('AVAILABLE');
+  });
+
+  it('a HELD booking with no holdExpiresAt is treated as not occupying (defensive)', () => {
+    const bookings: AvailabilityBooking[] = [{ slotIndex: 8, status: 'HELD' }];
+    const result = getDayAvailability(baseInput({ bookings }));
+    expect(result.find((s) => s.index === 8)!.state).toBe('AVAILABLE');
   });
 });
 

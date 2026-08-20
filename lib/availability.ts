@@ -41,6 +41,17 @@ export const LIVE_BOOKING_STATUSES: readonly BookingStatusLike[] = [
 export interface AvailabilityBooking {
   slotIndex: SlotIndex;
   status: BookingStatusLike;
+  /**
+   * Only meaningful when status === 'HELD'. A HELD row that has passed its
+   * own holdExpiresAt is treated as NOT occupying the slot, even though the
+   * physical sweep (lib/booking-engine.ts) hasn't run an UPDATE yet — that
+   * sweep only happens transactionally on the next write. Reads self-heal
+   * here instead of showing "Booked" for up to HOLD_MINUTES after a hold
+   * has actually lapsed. Absent/null is treated as "not confirmed live",
+   * i.e. not occupying — the DB-level partial index is the real guard
+   * against double booking, not this read path.
+   */
+  holdExpiresAt?: Date | null;
 }
 
 export interface AvailabilitySlotRule {
@@ -89,10 +100,15 @@ export function getDayAvailability(input: DayAvailabilityInput): SlotView[] {
   const ruleByIndex = new Map<SlotIndex, AvailabilitySlotRule>(
     slotRules.map((rule) => [rule.slotIndex, rule]),
   );
+  function occupiesSlot(booking: AvailabilityBooking): boolean {
+    if (!LIVE_BOOKING_STATUSES.includes(booking.status)) return false;
+    if (booking.status === 'HELD') {
+      return !!booking.holdExpiresAt && booking.holdExpiresAt.getTime() > now.getTime();
+    }
+    return true;
+  }
   const liveBookingIndexes = new Set<SlotIndex>(
-    bookings
-      .filter((booking) => LIVE_BOOKING_STATUSES.includes(booking.status))
-      .map((booking) => booking.slotIndex),
+    bookings.filter(occupiesSlot).map((booking) => booking.slotIndex),
   );
   const wholeDayBlackedOut = blackouts.some((blackout) => blackout.slotIndex === null);
   const blackedOutIndexes = new Set<SlotIndex>(
