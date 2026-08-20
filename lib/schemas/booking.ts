@@ -35,8 +35,8 @@ export const dateParamSchema = z.string().regex(DATE_PARAM_RE, 'Invalid date');
 export const slotIndexSchema = z.number().int().min(0).max(15);
 
 /** Optional text field submitted via a plain HTML form — "" and undefined
- * both mean "not provided". */
-function optionalText(max: number) {
+ * both mean "not provided". Exported for reuse by lib/schemas/admin.ts. */
+export function optionalText(max: number) {
   return z
     .string()
     .trim()

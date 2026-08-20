@@ -15,10 +15,10 @@
  * side effect outside the booking transaction." Callers (Server Actions)
  * send them after a successful call returns.
  */
-import { Prisma, type Booking, type BookingSource } from '@prisma/client';
+import { Prisma, type Booking, type BookingSource, type PaymentMethod } from '@prisma/client';
 import { prisma } from './prisma';
 import { dateOnly, fetchDayAvailability } from './availability-service';
-import { assertValidSlotIndex, hasSlotStarted, slotStart, type SlotIndex } from './slots';
+import { assertValidSlotIndex, hasSlotStarted, slotEnd, slotStart, type SlotIndex, type SlotView } from './slots';
 
 type Tx = Prisma.TransactionClient;
 
@@ -133,6 +133,28 @@ async function runSerializable<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
 
 // ---------------------------------------------------------------- shared helpers
 
+/**
+ * Maps a non-AVAILABLE slot to the right error for the caller. SlotTakenError
+ * ("just booked by someone else") is reserved for BOOKED — an actual race
+ * with another booking. Every other reason (past, maintenance, blocked) is
+ * known before the transaction even starts and gets its own honest message
+ * instead of implying a race that didn't happen.
+ */
+function assertSlotBookable(slot: SlotView): void {
+  switch (slot.state) {
+    case 'AVAILABLE':
+      return;
+    case 'BOOKED':
+      throw new SlotTakenError();
+    case 'PAST':
+      throw new SlotNotBookableError('This slot has already started.');
+    case 'MAINTENANCE':
+      throw new SlotNotBookableError('This slot is closed for maintenance.');
+    case 'BLOCKED':
+      throw new SlotNotBookableError('This slot is not available.');
+  }
+}
+
 /** Frees expired holds so they stop occupying the partial unique index.
  * Must run inside the same transaction as the write that follows it. */
 async function sweepExpiredHolds(tx: Tx, now: Date): Promise<void> {
@@ -234,9 +256,7 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
 
     const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now);
     const slot = slots.find((s) => s.index === slotIndex)!;
-    if (slot.state !== 'AVAILABLE') {
-      throw new SlotNotBookableError(`Slot ${slotIndex} on ${day.toDateString()} is ${slot.state.toLowerCase()}.`);
-    }
+    assertSlotBookable(slot);
 
     const customer = await upsertCustomer(tx, { phone: input.phone, fullName: input.fullName });
     const reference = await nextReference(tx, now);
@@ -348,16 +368,15 @@ async function confirmHeldBooking(
   // may still be filled in here, but never by re-resolving on a phone
   // number, which could silently attach these details to a DIFFERENT
   // customer if the confirm form ever carried a different phone.
-  if (input.email !== undefined || input.teamName !== undefined) {
-    const customer = await tx.customer.findUniqueOrThrow({ where: { id: held.customerId } });
-    await tx.customer.update({
-      where: { id: customer.id },
-      data: {
-        email: input.email ?? customer.email,
-        teamName: input.teamName ?? customer.teamName,
-      },
-    });
-  }
+  const customer = await tx.customer.findUniqueOrThrow({ where: { id: held.customerId } });
+  await tx.customer.update({
+    where: { id: customer.id },
+    data: {
+      email: input.email ?? customer.email,
+      teamName: input.teamName ?? customer.teamName,
+      totalBookings: { increment: 1 },
+    },
+  });
 
   const booking = await tx.booking.update({
     where: { id: held.id },
@@ -381,9 +400,7 @@ async function createFreshConfirmedBooking(
 ): Promise<Booking> {
   const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now);
   const slot = slots.find((s) => s.index === slotIndex)!;
-  if (slot.state !== 'AVAILABLE') {
-    throw new SlotTakenError();
-  }
+  assertSlotBookable(slot);
 
   const customer = await upsertCustomer(tx, {
     phone: input.phone,
@@ -398,6 +415,8 @@ async function createFreshConfirmedBooking(
       throw new BookingLimitExceededError();
     }
   }
+
+  await tx.customer.update({ where: { id: customer.id }, data: { totalBookings: { increment: 1 } } });
 
   const reference = await nextReference(tx, now);
   const price = input.priceOverride ?? ruleByIndex.get(slotIndex)!.price;
@@ -504,9 +523,7 @@ export async function rescheduleBooking(input: RescheduleBookingInput): Promise<
 
     const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.newDate, now, booking.id);
     const slot = slots.find((s) => s.index === newSlotIndex)!;
-    if (slot.state !== 'AVAILABLE') {
-      throw new SlotTakenError();
-    }
+    assertSlotBookable(slot);
 
     const before = booking;
     const updated = await tx.booking.update({
@@ -526,6 +543,171 @@ export async function rescheduleBooking(input: RescheduleBookingInput): Promise<
       after: updated,
     });
 
+    return updated;
+  });
+}
+
+// ---------------------------------------------------------------- staff-only extras (step 6)
+
+export interface CheckInBookingInput {
+  bookingId: string;
+  staffUserId: string;
+  now?: Date;
+}
+
+/** One-tap check-in from the DayTimeline. A booking can't be checked in
+ * before its slot starts. If the slot has ALREADY ended by the time staff
+ * check someone in (a late check-in), it goes straight to COMPLETED. */
+export async function checkInBooking(input: CheckInBookingInput): Promise<Booking> {
+  const now = input.now ?? new Date();
+
+  return prisma.$transaction(async (tx) => {
+    const booking = await tx.booking.findUnique({ where: { id: input.bookingId } });
+    if (!booking) throw new InvalidTransitionError('Booking not found.');
+    if (booking.status !== 'CONFIRMED') {
+      throw new InvalidTransitionError(`Cannot check in a booking with status ${booking.status}.`);
+    }
+    if (booking.checkedInAt) {
+      throw new InvalidTransitionError('This booking is already checked in.');
+    }
+    if (!hasSlotStarted(booking.date, booking.slotIndex as SlotIndex, now)) {
+      throw new InvalidTransitionError('This slot has not started yet.');
+    }
+
+    const before = booking;
+    const alreadyOver = slotEnd(booking.date, booking.slotIndex as SlotIndex).getTime() <= now.getTime();
+    const updated = await tx.booking.update({
+      where: { id: booking.id },
+      data: { checkedInAt: now, status: alreadyOver ? 'COMPLETED' : booking.status },
+    });
+
+    await writeAudit(tx, {
+      actorId: input.staffUserId,
+      action: 'BOOKING_CHECKED_IN',
+      entityId: updated.id,
+      before,
+      after: updated,
+    });
+    return updated;
+  });
+}
+
+export interface MarkNoShowInput {
+  bookingId: string;
+  staffUserId: string;
+  now?: Date;
+}
+
+/** CONFIRMED -> NO_SHOW, staff only, and only once the slot has actually
+ * started — you can't know someone is a no-show before their time. */
+export async function markNoShow(input: MarkNoShowInput): Promise<Booking> {
+  const now = input.now ?? new Date();
+
+  return prisma.$transaction(async (tx) => {
+    const booking = await tx.booking.findUnique({ where: { id: input.bookingId }, include: { customer: true } });
+    if (!booking) throw new InvalidTransitionError('Booking not found.');
+    if (booking.status !== 'CONFIRMED') {
+      throw new InvalidTransitionError(`Cannot mark a booking with status ${booking.status} as no-show.`);
+    }
+    if (!hasSlotStarted(booking.date, booking.slotIndex as SlotIndex, now)) {
+      throw new InvalidTransitionError('This slot has not started yet.');
+    }
+
+    const before = booking;
+    const updated = await tx.booking.update({ where: { id: booking.id }, data: { status: 'NO_SHOW' } });
+    await tx.customer.update({
+      where: { id: booking.customerId },
+      data: { totalNoShows: { increment: 1 } },
+    });
+
+    await writeAudit(tx, {
+      actorId: input.staffUserId,
+      action: 'BOOKING_NO_SHOW',
+      entityId: updated.id,
+      before,
+      after: updated,
+    });
+    return updated;
+  });
+}
+
+export interface RecordPaymentInput {
+  bookingId: string;
+  amount: number;
+  method: PaymentMethod;
+  staffUserId: string;
+  note?: string;
+  now?: Date;
+}
+
+/** Appends a Payment row (a booking can have several — CLAUDE.md §5) and
+ * recomputes Booking.paymentStatus from the running total. */
+export async function recordPayment(input: RecordPaymentInput): Promise<Booking> {
+  if (input.amount <= 0) {
+    throw new InvalidTransitionError('Payment amount must be greater than zero.');
+  }
+  const now = input.now ?? new Date();
+
+  return prisma.$transaction(async (tx) => {
+    const booking = await tx.booking.findUnique({ where: { id: input.bookingId } });
+    if (!booking) throw new InvalidTransitionError('Booking not found.');
+
+    await tx.payment.create({
+      data: {
+        bookingId: booking.id,
+        amount: input.amount,
+        method: input.method,
+        receivedById: input.staffUserId,
+        receivedAt: now,
+        note: input.note ?? null,
+      },
+    });
+
+    const newAmountPaid = Number(booking.amountPaid) + input.amount;
+    const priceAmount = Number(booking.priceAmount);
+    const paymentStatus = newAmountPaid <= 0 ? 'UNPAID' : newAmountPaid < priceAmount ? 'PARTIAL' : 'PAID';
+
+    const before = booking;
+    const updated = await tx.booking.update({
+      where: { id: booking.id },
+      data: { amountPaid: newAmountPaid, paymentStatus },
+    });
+
+    await writeAudit(tx, {
+      actorId: input.staffUserId,
+      action: 'PAYMENT_RECORDED',
+      entityId: updated.id,
+      before,
+      after: updated,
+    });
+    return updated;
+  });
+}
+
+export interface UpdateBookingNoteInput {
+  bookingId: string;
+  internalNote: string;
+  staffUserId: string;
+}
+
+export async function updateBookingNote(input: UpdateBookingNoteInput): Promise<Booking> {
+  return prisma.$transaction(async (tx) => {
+    const booking = await tx.booking.findUnique({ where: { id: input.bookingId } });
+    if (!booking) throw new InvalidTransitionError('Booking not found.');
+
+    const before = booking;
+    const updated = await tx.booking.update({
+      where: { id: booking.id },
+      data: { internalNote: input.internalNote },
+    });
+
+    await writeAudit(tx, {
+      actorId: input.staffUserId,
+      action: 'BOOKING_NOTE_UPDATED',
+      entityId: updated.id,
+      before,
+      after: updated,
+    });
     return updated;
   });
 }
