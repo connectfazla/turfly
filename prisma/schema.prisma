@@ -1,0 +1,248 @@
+// Turf Booking & Management System — data model
+// See CLAUDE.md §2 and §5. The partial unique index on Booking is NOT expressible
+// in Prisma schema syntax — it must be added by hand in a migration. Read the note
+// at the bottom of this file before running migrate.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- enums
+
+enum Role {
+  ADMIN
+  MODERATOR
+}
+
+enum BookingStatus {
+  HELD
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  REFUNDED
+}
+
+enum BookingSource {
+  ONLINE
+  COUNTER
+}
+
+enum PaymentMethod {
+  CASH
+  BKASH
+  NAGAD
+  BANK_TRANSFER
+  CARD
+  OTHER
+}
+
+// ---------------------------------------------------------------- staff
+
+/// Staff only. Customers are NEVER Users — they do not authenticate.
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(MODERATOR)
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  bookingsCreated Booking[]  @relation("BookingCreatedBy")
+  paymentsTaken   Payment[]  @relation("PaymentReceivedBy")
+  blackouts       Blackout[]
+  auditEntries    AuditLog[]
+
+  @@index([role, isActive])
+}
+
+// ---------------------------------------------------------------- public
+
+/// Identified by mobile number. No password, no login.
+model Customer {
+  id             String   @id @default(cuid())
+  phone          String   @unique
+  fullName       String
+  email          String?
+  teamName       String?
+  totalBookings  Int      @default(0)
+  totalNoShows   Int      @default(0)
+  isBlocked      Boolean  @default(false)
+  blockedReason  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  bookings Booking[]
+
+  @@index([fullName])
+  @@index([isBlocked])
+}
+
+// ---------------------------------------------------------------- core
+
+model Booking {
+  id            String        @id @default(cuid())
+  reference     String        @unique // TRF-2026-0184
+
+  customerId    String
+  customer      Customer      @relation(fields: [customerId], references: [id])
+
+  /// Calendar day only, no time component. NEVER compare directly with new Date().
+  date          DateTime      @db.Date
+  /// 0..15. Slot n starts at n * 90 minutes after midnight. 4 = maintenance.
+  slotIndex     Int
+
+  status        BookingStatus @default(HELD)
+  /// Set only while status = HELD. Swept inside createBooking's transaction.
+  holdExpiresAt DateTime?
+
+  priceAmount   Decimal       @db.Decimal(10, 2)
+  paymentStatus PaymentStatus @default(UNPAID)
+  amountPaid    Decimal       @default(0) @db.Decimal(10, 2)
+
+  source        BookingSource @default(ONLINE)
+  createdById   String?
+  createdBy     User?         @relation("BookingCreatedBy", fields: [createdById], references: [id])
+
+  checkedInAt   DateTime?
+  cancelledAt   DateTime?
+  cancelReason  String?
+
+  customerNote  String?
+  internalNote  String?
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  payments      Payment[]
+
+  // NOTE: this @@unique is a PLACEHOLDER so Prisma knows the shape.
+  // It must be REPLACED by the partial index in the migration — see bottom of file.
+  @@unique([date, slotIndex], name: "one_live_booking_per_slot")
+  @@index([date, status])
+  @@index([customerId])
+  @@index([status, holdExpiresAt])
+  @@index([reference])
+}
+
+// ---------------------------------------------------------------- config
+
+/// Seeded with 112 rows: 7 weekdays × 16 slots.
+/// slotIndex 4 is seeded isBookable=false on EVERY day — this is how the
+/// maintenance window is data rather than a hard-coded condition.
+model SlotRule {
+  id         String  @id @default(cuid())
+  dayOfWeek  Int // 0 = Sunday … 6 = Saturday
+  slotIndex  Int // 0..15
+  isBookable Boolean @default(true)
+  price      Decimal @db.Decimal(10, 2)
+
+  @@unique([dayOfWeek, slotIndex])
+  @@index([dayOfWeek])
+}
+
+/// A null slotIndex closes the entire day.
+model Blackout {
+  id          String   @id @default(cuid())
+  date        DateTime @db.Date
+  slotIndex   Int?
+  reason      String
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@unique([date, slotIndex])
+  @@index([date])
+}
+
+/// Venue-wide settings, single row. Kept in the DB so the owner can change
+/// them without a redeploy.
+model VenueSetting {
+  id                      String  @id @default("singleton")
+  venueName               String
+  contactPhone            String
+  contactEmail            String?
+  rulesText               String
+  holdMinutes             Int     @default(10)
+  cancellationWindowHours Int     @default(6)
+  bookingWindowDays       Int     @default(14)
+  updatedAt               DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------- money
+
+/// A booking may have several rows so advances and balances are both traceable.
+model Payment {
+  id             String        @id @default(cuid())
+  bookingId      String
+  booking        Booking       @relation(fields: [bookingId], references: [id])
+  amount         Decimal       @db.Decimal(10, 2)
+  method         PaymentMethod @default(CASH)
+  receivedById   String
+  receivedBy     User          @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
+  receivedAt     DateTime      @default(now())
+  note           String?
+
+  @@index([bookingId])
+  @@index([receivedAt])
+}
+
+// ---------------------------------------------------------------- audit
+
+/// Append-only. Written by the domain layer, never updated or deleted.
+/// References any entity by type + id — deliberately no foreign key, so an
+/// audit row survives deletion of the thing it describes.
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id])
+  action     String // BOOKING_CREATED, BOOKING_CANCELLED, PRICE_UPDATED, …
+  entityType String // Booking | Customer | SlotRule | Blackout | User
+  entityId   String
+  before     Json?
+  after      Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+}
+
+// ================================================================
+// REQUIRED MANUAL MIGRATION STEP
+// ================================================================
+//
+// The @@unique([date, slotIndex]) above is WRONG on its own: it would also
+// block re-booking a slot after a cancellation, because cancelled rows stay
+// in the table.
+//
+// After running `prisma migrate dev --create-only`, edit the generated SQL:
+//
+//   -- remove the plain unique index Prisma generated
+//   DROP INDEX IF EXISTS "Booking_date_slotIndex_key";
+//
+//   -- replace it with a PARTIAL unique index over live bookings only
+//   CREATE UNIQUE INDEX one_live_booking_per_slot
+//   ON "Booking" (date, "slotIndex")
+//   WHERE status IN ('HELD','CONFIRMED','COMPLETED');
+//
+// Then run `prisma migrate dev`. Verify with `\d "Booking"` in psql that the
+// index exists AND shows its WHERE clause. This one index is what makes double
+// booking structurally impossible.
+// ================================================================
