@@ -21,11 +21,15 @@ const PHONE_PREFIX = '+8801900';
 
 function testDate(): Date {
   // 10 days out — inside the 14-day booking window, guaranteed not to have
-  // started, and stable for the lifetime of a single test run.
-  const d = new Date();
-  d.setDate(d.getDate() + 10);
-  d.setHours(0, 0, 0, 0);
-  return d;
+  // started, and stable for the lifetime of a single test run. Built as
+  // UTC-midnight with today's LOCAL Y/M/D (see lib/availability-service.ts
+  // dateOnly()) so this matches exactly what Prisma stores/queries for
+  // Booking.date — otherwise the cleanup queries below would target the
+  // wrong row in a positive-UTC-offset timezone (this app is fixed to
+  // Asia/Dhaka, UTC+6).
+  const local = new Date();
+  local.setDate(local.getDate() + 10);
+  return new Date(Date.UTC(local.getFullYear(), local.getMonth(), local.getDate()));
 }
 
 async function cleanUp(date: Date) {

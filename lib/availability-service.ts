@@ -27,8 +27,23 @@ export interface DayAvailabilityResult {
   slots: SlotView[];
 }
 
+/**
+ * Converts a Date carrying the INTENDED local calendar day (its local Y/M/D
+ * — e.g. from parseDateParam, or lib/slots.ts arithmetic) into the exact
+ * Date value Prisma expects for a `@db.Date` column.
+ *
+ * Prisma serializes `@db.Date` fields using the Date object's UTC Y/M/D,
+ * not its local Y/M/D. A local-midnight Date (`new Date(y, m, d)`) in any
+ * positive-UTC-offset timezone — this app is fixed to Asia/Dhaka, UTC+6 —
+ * falls on the PREVIOUS day in UTC, so Prisma would store/query the wrong
+ * calendar date. Building UTC-midnight with the same digits instead keeps
+ * every write and every `where: { date }` filter aligned with what's
+ * actually in Postgres. This is the one place that boundary is crossed —
+ * every write path (booking-engine.ts) and read path (this file) for
+ * Booking.date / Blackout.date funnels through here.
+ */
 export function dateOnly(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
 }
 
 export async function fetchDayAvailability(
