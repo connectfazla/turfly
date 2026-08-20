@@ -4,8 +4,16 @@
 /*
  * Design tokens — CLAUDE.md §6. Nine colours, one accent.
  * Anything not listed here does not appear in the UI. Do not improvise.
+ * No dark mode: the spec defines one fixed light palette.
+ *
+ * shadcn/ui components (components/ui/*) read the --background / --primary
+ * / --border / etc. names below — those are shadcn's own variable names,
+ * remapped to this palette's nine colours so every shadcn component that
+ * gets added later already matches CLAUDE.md §6 without per-component
+ * overrides.
  */
 :root {
+  /* the nine colours */
   --color-surface: #ffffff;
   --color-surface-muted: #f9fafb;
   --color-border: #e5e7eb;
@@ -19,6 +27,28 @@
   --radius-card: 8px;
   --radius-input: 6px;
   --shadow-elevated: 0 4px 16px rgba(17, 24, 39, 0.12);
+
+  /* shadcn/ui semantic tokens, mapped onto the nine colours above */
+  --background: var(--color-surface);
+  --foreground: var(--color-text);
+  --card: var(--color-surface);
+  --card-foreground: var(--color-text);
+  --popover: var(--color-surface);
+  --popover-foreground: var(--color-text);
+  --primary: var(--color-accent);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-surface-muted);
+  --secondary-foreground: var(--color-text);
+  --muted: var(--color-surface-muted);
+  --muted-foreground: var(--color-text-muted);
+  --accent: var(--color-accent-soft);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-danger);
+  --destructive-foreground: #ffffff;
+  --border: var(--color-border);
+  --input: var(--color-border);
+  --ring: var(--color-accent);
+  --radius: 0.5rem; /* 8px, matches --radius-card */
 }
 
 @theme inline {
@@ -54,6 +84,29 @@
   --radius-card: var(--radius-card);
   --radius-input: var(--radius-input);
   --shadow-elevated: var(--shadow-elevated);
+
+  /* shadcn semantic tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 body {

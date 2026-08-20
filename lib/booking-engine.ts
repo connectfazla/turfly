@@ -263,25 +263,35 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
 
 // ---------------------------------------------------------------- createBooking
 
-export interface CreateBookingInput {
+interface CreateBookingCommon {
   date: Date;
   slotIndex: number;
-  phone: string;
-  fullName: string;
   email?: string;
   teamName?: string;
   note?: string;
+  now?: Date;
+}
+
+export interface ConfirmHeldBookingInput extends CreateBookingCommon {
   /** The id of a booking previously returned by holdSlot(), for this same
-   * (date, slotIndex). When present, that HELD row is confirmed in place
-   * (HELD -> CONFIRMED) instead of inserting a new row. */
-  holdId?: string;
+   * (date, slotIndex). That HELD row is confirmed in place — its customer
+   * (fixed at hold time) and reference (already generated) are reused, not
+   * re-derived from anything in this call. */
+  holdId: string;
+}
+
+export interface CreateFreshBookingInput extends CreateBookingCommon {
+  holdId?: undefined;
+  phone: string;
+  fullName: string;
   /** Counter bookings (staff, source COUNTER) skip the 2-active-booking
    * limit and may set a custom price. */
   source?: BookingSource;
   createdById?: string;
   priceOverride?: number;
-  now?: Date;
 }
+
+export type CreateBookingInput = ConfirmHeldBookingInput | CreateFreshBookingInput;
 
 /**
  * HELD -> CONFIRMED (public, via holdId) or — -> CONFIRMED (counter
@@ -290,25 +300,33 @@ export interface CreateBookingInput {
  * limit (skipped for COUNTER), generate the reference (fresh-insert path
  * only — a held row already has one), create/confirm the row, write audit.
  */
+function isConfirmHeldInput(input: CreateBookingInput): input is ConfirmHeldBookingInput {
+  return typeof input.holdId === 'string';
+}
+
 export async function createBooking(input: CreateBookingInput): Promise<Booking> {
   assertValidSlotIndex(input.slotIndex);
   const now = input.now ?? new Date();
   const slotIndex = input.slotIndex as SlotIndex;
-  const source: BookingSource = input.source ?? 'ONLINE';
 
+  if (isConfirmHeldInput(input)) {
+    const confirmInput = input;
+    return runSerializable(async (tx) => {
+      await sweepExpiredHolds(tx, now);
+      return confirmHeldBooking(tx, confirmInput, now, slotIndex);
+    });
+  }
+
+  const freshInput = input;
   return runSerializable(async (tx) => {
     await sweepExpiredHolds(tx, now);
-
-    if (input.holdId) {
-      return confirmHeldBooking(tx, input, now, slotIndex);
-    }
-    return createFreshConfirmedBooking(tx, input, now, slotIndex, source);
+    return createFreshConfirmedBooking(tx, freshInput, now, slotIndex, freshInput.source ?? 'ONLINE');
   });
 }
 
 async function confirmHeldBooking(
   tx: Tx,
-  input: CreateBookingInput,
+  input: ConfirmHeldBookingInput,
   now: Date,
   slotIndex: SlotIndex,
 ): Promise<Booking> {
@@ -326,12 +344,20 @@ async function confirmHeldBooking(
   }
 
   const before = held;
-  await upsertCustomer(tx, {
-    phone: input.phone,
-    fullName: input.fullName,
-    email: input.email,
-    teamName: input.teamName,
-  });
+  // The customer is fixed at hold time (held.customerId) — email/teamName
+  // may still be filled in here, but never by re-resolving on a phone
+  // number, which could silently attach these details to a DIFFERENT
+  // customer if the confirm form ever carried a different phone.
+  if (input.email !== undefined || input.teamName !== undefined) {
+    const customer = await tx.customer.findUniqueOrThrow({ where: { id: held.customerId } });
+    await tx.customer.update({
+      where: { id: customer.id },
+      data: {
+        email: input.email ?? customer.email,
+        teamName: input.teamName ?? customer.teamName,
+      },
+    });
+  }
 
   const booking = await tx.booking.update({
     where: { id: held.id },
@@ -348,7 +374,7 @@ async function confirmHeldBooking(
 
 async function createFreshConfirmedBooking(
   tx: Tx,
-  input: CreateBookingInput,
+  input: CreateFreshBookingInput,
   now: Date,
   slotIndex: SlotIndex,
   source: BookingSource,
