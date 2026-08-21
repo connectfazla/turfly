@@ -41,7 +41,13 @@ export default async function AdminUsersPage() {
                   {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('en-GB') : 'Never'}
                 </TableCell>
                 <TableCell className="text-right">
-                  <UserRowControls userId={u.id} role={u.role} isActive={u.isActive} isSelf={u.id === session?.user.id} />
+                  <UserRowControls
+                    userId={u.id}
+                    userName={u.name}
+                    role={u.role}
+                    isActive={u.isActive}
+                    isSelf={u.id === session?.user.id}
+                  />
                 </TableCell>
               </TableRow>
             ))}

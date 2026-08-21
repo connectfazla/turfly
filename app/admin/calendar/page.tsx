@@ -81,12 +81,18 @@ export default async function AdminCalendarPage({ searchParams }: Props) {
             href={`/admin?date=${formatDateParam(date)}`}
             className={cn(
               'flex flex-col items-center gap-1 rounded-(--radius-card) border p-3',
-              isToday ? 'border-accent bg-accent-soft' : 'border-border bg-surface',
-              isPast && 'opacity-50',
+              isToday ? 'border-accent bg-accent-soft' : isPast ? 'border-border bg-surface-muted' : 'border-border bg-surface',
             )}
           >
+            {/* isPast is shown via bg-surface-muted, not opacity — reducing
+             * opacity on text-muted (#6B7280) against white measured
+             * 1.96:1, far under WCAG AA's 4.5:1 (caught by the axe test). */}
             <span className="text-body font-medium text-text tabular-nums">{date.getDate()}</span>
-            <span className="text-caption text-text-muted">{freeCount} free</span>
+            {/* text-text, not text-muted — text-muted on the isToday cell's
+             * bg-accent-soft measured 4.4:1, just under WCAG AA's 4.5:1. */}
+            <span className="text-caption text-text">
+              {freeCount} free{isPast ? ' (past)' : ''}
+            </span>
           </Link>
         ))}
       </div>

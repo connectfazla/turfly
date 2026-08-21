@@ -41,7 +41,10 @@ export async function DateStrip({ selected }: DateStripProps) {
             )}
           >
             <span className="text-caption font-medium">{day.label}</span>
-            <span className={cn('text-caption', isSelected ? 'text-white/80' : 'text-text-muted')}>
+            {/* Full-opacity white, not /80 — text-white/80 on accent green
+             * measured 3.81:1, under WCAG AA's 4.5:1 minimum (caught by
+             * the axe accessibility test). */}
+            <span className={cn('text-caption', isSelected ? 'text-white' : 'text-text-muted')}>
               {day.freeCount} free
             </span>
           </Link>

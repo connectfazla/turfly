@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  DATABASE_URL: postgresql://turf:turf@localhost:5432/turf_booking?schema=public
+  AUTH_SECRET: ci-only-secret-not-for-production-use-generate-a-real-one
+  AUTH_URL: http://localhost:3000
+  NOTIFICATIONS_ENABLED: 'false'
+  HOLD_MINUTES: '10'
+  CANCELLATION_WINDOW_HOURS: '6'
+  BOOKING_WINDOW_DAYS: '14'
+  TZ: Asia/Dhaka
+  SEED_ADMIN_PASSWORD: ci-admin-password-123
+  SEED_MODERATOR_PASSWORD: ci-moderator-password-123
+
+jobs:
+  # typecheck, lint, unit tests — the coverage gate on lib/slots.ts and
+  # lib/availability.ts is enforced by vitest.config.ts's 100% thresholds,
+  # so `pnpm test:coverage` itself fails the job if coverage regresses.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test:coverage
+
+  # build, migrate + seed a real Postgres, then Playwright: the live
+  # concurrency proof, RBAC, and axe accessibility passes.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: checks
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: turf
+          POSTGRES_PASSWORD: turf
+          POSTGRES_DB: turf_booking
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U turf -d turf_booking"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm prisma migrate deploy
+      - run: pnpm db:seed
+      - run: pnpm build
+      - run: pnpm e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+  # Lighthouse (performance/accessibility/best-practices/SEO) and a second
+  # axe pass against the actual production build, with score thresholds —
+  # BUILD_PLAN.md step 8. Runs after e2e so it only fires on an otherwise
+  # green build.
+  lighthouse:
+    runs-on: ubuntu-latest
+    needs: e2e
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: turf
+          POSTGRES_PASSWORD: turf
+          POSTGRES_DB: turf_booking
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U turf -d turf_booking"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma migrate deploy
+      - run: pnpm db:seed
+      - run: pnpm build
+      - run: pnpm start &
+      - run: pnpm dlx wait-on http://localhost:3000
+      - run: pnpm dlx @lhci/cli@0.14 autorun

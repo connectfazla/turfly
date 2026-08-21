@@ -26,4 +26,8 @@ export default auth((req) => {
 // Server Action re-checks via lib/auth/require-role.ts regardless of this.
 export const config = {
   matcher: ['/admin/:path*'],
+  // Auth.js's JWT decoding (jose) uses Node APIs (Compression/DecompressionStream)
+  // the Edge runtime doesn't support — harmless for our small session payloads,
+  // but Next.js 15's Node.js middleware runtime avoids the warning entirely.
+  runtime: 'nodejs',
 };

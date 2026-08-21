@@ -9,11 +9,13 @@ import type { Role } from '@prisma/client';
 
 export function UserRowControls({
   userId,
+  userName,
   role,
   isActive,
   isSelf,
 }: {
   userId: string;
+  userName: string;
   role: Role;
   isActive: boolean;
   isSelf: boolean;
@@ -45,7 +47,7 @@ export function UserRowControls({
     <div className="flex flex-col items-end gap-1">
       <div className="flex items-center gap-3">
         <Select value={role} onValueChange={handleRoleChange} disabled={isSelf}>
-          <SelectTrigger className="w-32 rounded-(--radius-input)">
+          <SelectTrigger className="w-32 rounded-(--radius-input)" aria-label={`Role for ${userName}`}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -54,7 +56,12 @@ export function UserRowControls({
           </SelectContent>
         </Select>
         <div className="flex items-center gap-2">
-          <Switch checked={isActive} onCheckedChange={handleActiveChange} disabled={isSelf && isActive} />
+          <Switch
+            checked={isActive}
+            onCheckedChange={handleActiveChange}
+            disabled={isSelf && isActive}
+            aria-label={`${isActive ? 'Disable' : 'Enable'} ${userName}`}
+          />
           <span className="text-caption text-text-muted">{isActive ? 'Active' : 'Disabled'}</span>
         </div>
       </div>
