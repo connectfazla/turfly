@@ -128,7 +128,7 @@ export function CounterBookingForm() {
           {serverError}
         </p>
       ) : null}
-      {success ? <p className="text-caption text-accent">Booked — reference {success}.</p> : null}
+      {success ? <p className="text-caption text-accent">Booked. Reference {success}.</p> : null}
 
       <Button type="submit" disabled={form.formState.isSubmitting} className="w-fit">
         {form.formState.isSubmitting ? 'Booking…' : 'Create booking'}

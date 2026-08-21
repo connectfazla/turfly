@@ -25,7 +25,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <header className="border-b border-border bg-surface">
         <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between gap-3 px-4">
           <Link href="/admin" className="shrink-0 text-subheading font-semibold text-text">
-            Greenfield Turf — Admin
+            Greenfield Turf: Admin
           </Link>
           <div className="flex items-center gap-4 text-caption text-text-muted">
             <span>

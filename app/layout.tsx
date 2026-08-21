@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Greenfield Turf — Book the pitch",
+  title: "Greenfield Turf: Book the pitch",
   description: "Book the football turf online. No login required.",
 };
 

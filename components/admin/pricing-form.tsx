@@ -56,7 +56,7 @@ export function PricingForm({ current }: { current: PricingFormInput }) {
           {serverError}
         </p>
       ) : null}
-      {saved ? <p className="text-caption text-accent">Saved — applies to all future bookings.</p> : null}
+      {saved ? <p className="text-caption text-accent">Saved. Applies to all future bookings.</p> : null}
 
       <Button type="submit" disabled={form.formState.isSubmitting} className="w-fit">
         {form.formState.isSubmitting ? 'Saving…' : 'Save pricing'}

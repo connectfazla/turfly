@@ -9,7 +9,7 @@ const PAGE_SIZE = 100;
 function diffSummary(before: unknown, after: unknown): string {
   if (before == null && after != null) return 'created';
   if (before != null && after == null) return 'deleted';
-  if (before == null && after == null) return '—';
+  if (before == null && after == null) return 'no detail';
 
   const b = before as Record<string, unknown>;
   const a = after as Record<string, unknown>;

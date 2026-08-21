@@ -22,7 +22,7 @@ export default async function RulesPage() {
         <ul className="mt-6 flex flex-col gap-3 text-body text-text">
           <li>Each booking is one 90-minute slot.</li>
           <li>
-            The pitch is closed for maintenance every day from {slotLabel(MAINTENANCE_SLOT)} — this
+            The pitch is closed for maintenance every day from {slotLabel(MAINTENANCE_SLOT)}. This
             slot is never bookable.
           </li>
           <li>A slot is held for you for {holdMinutes} minutes while you complete the form.</li>

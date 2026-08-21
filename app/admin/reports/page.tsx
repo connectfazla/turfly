@@ -59,7 +59,7 @@ export default async function AdminReportsPage({ searchParams }: Props) {
       </div>
 
       <div className="rounded-(--radius-card) border border-border bg-surface p-4">
-        <h2 className="text-subheading text-text">Utilisation — slot × day of week</h2>
+        <h2 className="text-subheading text-text">Utilisation: slot by day of week</h2>
         <p className="mt-1 text-caption text-text-muted">Bookings per slot across the selected range.</p>
         <div className="mt-3">
           <UtilizationHeatmap cells={report.heatMap} />

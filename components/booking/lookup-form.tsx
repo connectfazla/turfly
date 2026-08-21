@@ -136,7 +136,7 @@ export function LookupForm() {
               )
             ) : result.status === 'CONFIRMED' ? (
               <p className="text-caption text-text-muted">
-                This booking starts within 6 hours — please contact the venue to cancel.
+                This booking starts within 6 hours. Please contact the venue to cancel.
               </p>
             ) : null}
           </CardContent>

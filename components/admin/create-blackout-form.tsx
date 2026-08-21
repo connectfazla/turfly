@@ -128,12 +128,12 @@ export function CreateBlackoutForm() {
           <ul className="mt-2 flex flex-col gap-1 text-caption text-text-muted">
             {affected.map((b) => (
               <li key={b.reference}>
-                {b.reference} — {b.customerName} — {b.slotLabel}
+                {b.reference} · {b.customerName} · {b.slotLabel}
               </li>
             ))}
           </ul>
           <p className="mt-2 text-caption text-text-muted">
-            The blackout does not cancel these automatically — cancel or reschedule them from the
+            The blackout does not cancel these automatically. Cancel or reschedule them from the
             Bookings page.
           </p>
           <div className="mt-3 flex gap-2">

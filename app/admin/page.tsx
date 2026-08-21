@@ -112,7 +112,7 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
                   </div>
                 </>
               ) : (
-                <div className="flex-1 text-body text-text-muted">—</div>
+                <div className="flex-1 text-body text-text-muted">Free</div>
               )}
             </div>
           );

@@ -14,7 +14,7 @@ export default async function AdminUsersPage() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-display text-text">Users</h1>
-        <p className="mt-1 text-body text-text-muted">Staff accounts — counter staff and owners.</p>
+        <p className="mt-1 text-body text-text-muted">Staff accounts: counter staff and owners.</p>
       </div>
 
       <CreateUserForm />

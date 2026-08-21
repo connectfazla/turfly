@@ -18,7 +18,7 @@ export default async function AdminPricingPage() {
     <div>
       <h1 className="text-display text-text">Pricing</h1>
       <p className="mt-1 text-body text-text-muted">
-        Prices apply by category across all matching slots — not editable per row.
+        Prices apply by category across all matching slots. Not editable per row.
       </p>
       <div className="mt-6">
         <PricingForm

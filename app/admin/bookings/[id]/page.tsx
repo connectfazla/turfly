@@ -79,7 +79,7 @@ export default async function AdminBookingDetailPage({ params }: Props) {
           ) : null}
           <div className="flex justify-between">
             <span className="text-text-muted">Source</span>
-            <span>{booking.source === 'COUNTER' ? `Counter (${booking.createdBy?.name ?? '—'})` : 'Online'}</span>
+            <span>{booking.source === 'COUNTER' ? `Counter (${booking.createdBy?.name ?? 'unknown staff'})` : 'Online'}</span>
           </div>
         </CardContent>
       </Card>
@@ -111,7 +111,7 @@ export default async function AdminBookingDetailPage({ params }: Props) {
               {booking.payments.map((p) => (
                 <li key={p.id} className="flex justify-between tabular-nums">
                   <span>
-                    {p.method.replace('_', ' ')} {p.note ? `— ${p.note}` : ''}
+                    {p.method.replace('_', ' ')} {p.note ? `(${p.note})` : ''}
                   </span>
                   <span>{formatBDT(p.amount.toString())}</span>
                 </li>

@@ -110,7 +110,7 @@ export default async function AdminBookingsPage({ searchParams }: Props) {
 
       {bookings.length === PAGE_SIZE ? (
         <p className="mt-3 text-caption text-text-muted">
-          Showing the first {PAGE_SIZE} results — narrow your filters to see more precisely.
+          Showing the first {PAGE_SIZE} results. Narrow your filters to see more precisely.
         </p>
       ) : null}
     </div>

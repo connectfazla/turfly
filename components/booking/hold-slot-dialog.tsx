@@ -66,7 +66,7 @@ export function HoldSlotDialog({ date, slot, onOpenChange }: HoldSlotDialogProps
             {slot ? (
               <>
                 {slot.label}
-                {slot.price !== null ? <> · {formatBDT(slot.price)}</> : null} — held for you for 10
+                {slot.price !== null ? <> · {formatBDT(slot.price)}</> : null}. Held for you for 10
                 minutes while you finish booking.
               </>
             ) : null}

@@ -39,7 +39,7 @@ export default async function AdminBlackoutsPage() {
                   {b.slotIndex === null ? 'Whole day' : slotLabel(b.slotIndex as SlotIndex)}
                 </div>
                 <div className="text-caption text-text-muted">
-                  {b.reason} — by {b.createdBy.name}
+                  {b.reason} · by {b.createdBy.name}
                 </div>
               </div>
               <DeleteBlackoutButton

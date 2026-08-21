@@ -52,7 +52,7 @@ export default async function BookingSuccessPage({ params }: Props) {
         </Card>
 
         <p className="mt-4 text-caption text-text-muted">
-          Save your reference — you&apos;ll need it with your phone number to look up or cancel this
+          Save your reference. You&apos;ll need it with your phone number to look up or cancel this
           booking.
         </p>
 

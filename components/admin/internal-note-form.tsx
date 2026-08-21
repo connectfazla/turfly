@@ -36,7 +36,7 @@ export function InternalNoteForm({ bookingId, initialNote }: { bookingId: string
           setSaved(false);
         }}
         rows={3}
-        placeholder="Internal note — not visible to the customer"
+        placeholder="Internal note, not visible to the customer"
         className="rounded-(--radius-input)"
       />
       <div className="flex items-center gap-3">
