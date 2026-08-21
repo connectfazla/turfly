@@ -19,7 +19,7 @@ Production:
 | Variable | Notes |
 |---|---|
 | `DATABASE_URL` | Neon's pooled connection string |
-| `AUTH_SECRET` | `pnpm dlx auth secret` — a fresh one, never reused from `.env` |
+| `AUTH_SECRET` | Generate with `openssl rand -base64 32` — a fresh one, never reused from `.env` |
 | `AUTH_URL` | your production URL, e.g. `https://greenfieldturf.example.com` |
 | `RESEND_API_KEY` | from resend.com, once you own the sending domain |
 | `SMS_API_KEY` | reserved — no SMS provider is wired up yet (see `lib/notifications/`) |
