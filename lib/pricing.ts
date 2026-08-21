@@ -37,6 +37,12 @@ function dayOfWeekToSampleDate(dayOfWeek: number): Date {
 }
 
 export const ALL_DAYS_OF_WEEK = Object.freeze([0, 1, 2, 3, 4, 5, 6]);
+export const WEEKEND_DAYS_OF_WEEK = Object.freeze([5, 6]); // Fri, Sat — matches isWeekend()
+export const WEEKDAY_DAYS_OF_WEEK = Object.freeze([0, 1, 2, 3, 4]);
+
+export function isWeekendDayOfWeek(dayOfWeek: number): boolean {
+  return isWeekend(dayOfWeekToSampleDate(dayOfWeek));
+}
 
 export function assertSlotsPerDay(n: number): void {
   if (n !== SLOTS_PER_DAY) {

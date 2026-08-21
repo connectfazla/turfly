@@ -76,6 +76,38 @@ export const deleteBlackoutSchema = z.object({ id: idSchema });
 
 // ---------------------------------------------------------------- customers
 
+// ---------------------------------------------------------------- pricing
+
+export const pricingSchema = z.object({
+  standard: z.coerce.number().positive('Enter a price greater than zero'),
+  peak: z.coerce.number().positive('Enter a price greater than zero'),
+  weekendStandard: z.coerce.number().positive('Enter a price greater than zero'),
+  weekendPeak: z.coerce.number().positive('Enter a price greater than zero'),
+});
+export type PricingFormInput = z.input<typeof pricingSchema>;
+
+// ---------------------------------------------------------------- users
+
+export const createUserSchema = z.object({
+  email: z.string().trim().toLowerCase().email('Enter a valid email'),
+  name: fullNameSchema,
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  role: z.enum(['ADMIN', 'MODERATOR']),
+});
+export type CreateUserFormInput = z.input<typeof createUserSchema>;
+
+export const setUserActiveSchema = z.object({
+  userId: idSchema,
+  isActive: z.boolean(),
+});
+
+export const changeUserRoleSchema = z.object({
+  userId: idSchema,
+  role: z.enum(['ADMIN', 'MODERATOR']),
+});
+
+// ---------------------------------------------------------------- customers
+
 export const blockCustomerSchema = z.object({
   customerId: idSchema,
   reason: z.string().trim().min(3, 'Enter a reason').max(200),

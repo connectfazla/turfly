@@ -1,0 +1,154 @@
+/**
+ * Report aggregation — shared by /admin/reports and its CSV export route,
+ * so both read the exact same numbers (never a second implementation).
+ *
+ * "Revenue" = amountPaid summed over CONFIRMED + COMPLETED + NO_SHOW —
+ * money actually collected, whether or not the customer showed up.
+ * CANCELLED/EXPIRED/HELD carry no revenue.
+ *
+ * Utilization is an estimate: (occupied slots) / (days in range x 15
+ * bookable slots). It does not subtract blackouts from the denominator —
+ * good enough for the qualitative "which slots are dead" read this report
+ * is for (BUILD_PLAN.md step 7's demo script), not a billing figure.
+ */
+import { prisma } from './prisma';
+import { dateOnly } from './availability-service';
+import { BOOKABLE_SLOT_INDEXES, type SlotIndex } from './slots';
+
+export type Granularity = 'day' | 'week' | 'month';
+
+const REVENUE_STATUSES = ['CONFIRMED', 'COMPLETED', 'NO_SHOW'] as const;
+
+export interface RevenueBucket {
+  key: string; // sort/group key
+  label: string; // display label
+  revenue: number;
+  count: number;
+}
+
+export interface HeatMapCell {
+  dayOfWeek: number; // 0..6
+  slotIndex: SlotIndex;
+  count: number;
+}
+
+export interface ReportSummary {
+  from: Date;
+  to: Date;
+  totalBookings: number;
+  totalRevenue: number;
+  totalNoShows: number;
+  utilizationPercent: number;
+  priorTotalRevenue: number;
+  priorTotalBookings: number;
+  revenueByBucket: RevenueBucket[];
+  heatMap: HeatMapCell[];
+  rows: ReportRow[];
+}
+
+export interface ReportRow {
+  reference: string;
+  date: Date;
+  slotIndex: number;
+  status: string;
+  customerName: string;
+  phone: string;
+  priceAmount: number;
+  amountPaid: number;
+}
+
+function daysInRange(from: Date, to: Date): number {
+  return Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
+}
+
+function bucketKey(date: Date, granularity: Granularity): { key: string; label: string } {
+  if (granularity === 'day') {
+    const key = date.toISOString().slice(0, 10);
+    return { key, label: date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) };
+  }
+  if (granularity === 'week') {
+    const weekStart = new Date(date);
+    weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay());
+    const key = weekStart.toISOString().slice(0, 10);
+    return { key, label: `Wk of ${weekStart.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}` };
+  }
+  const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+  const label = date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+  return { key, label };
+}
+
+export async function buildReport(from: Date, to: Date, granularity: Granularity): Promise<ReportSummary> {
+  const rangeFrom = dateOnly(from);
+  const rangeTo = dateOnly(to);
+  const rangeLength = daysInRange(rangeFrom, rangeTo);
+
+  const priorTo = new Date(rangeFrom);
+  priorTo.setUTCDate(priorTo.getUTCDate() - 1);
+  const priorFrom = new Date(priorTo);
+  priorFrom.setUTCDate(priorFrom.getUTCDate() - (rangeLength - 1));
+
+  const [bookings, priorBookings, noShowCount] = await Promise.all([
+    prisma.booking.findMany({
+      where: { date: { gte: rangeFrom, lte: rangeTo }, status: { in: [...REVENUE_STATUSES] } },
+      include: { customer: true },
+      orderBy: { date: 'asc' },
+    }),
+    prisma.booking.findMany({
+      where: { date: { gte: priorFrom, lte: priorTo }, status: { in: [...REVENUE_STATUSES] } },
+      select: { amountPaid: true },
+    }),
+    prisma.booking.count({ where: { date: { gte: rangeFrom, lte: rangeTo }, status: 'NO_SHOW' } }),
+  ]);
+
+  const totalRevenue = bookings.reduce((sum, b) => sum + Number(b.amountPaid), 0);
+  const priorTotalRevenue = priorBookings.reduce((sum, b) => sum + Number(b.amountPaid), 0);
+
+  const buckets = new Map<string, RevenueBucket>();
+  for (const b of bookings) {
+    const { key, label } = bucketKey(b.date, granularity);
+    const existing = buckets.get(key) ?? { key, label, revenue: 0, count: 0 };
+    existing.revenue += Number(b.amountPaid);
+    existing.count += 1;
+    buckets.set(key, existing);
+  }
+  const revenueByBucket = [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key));
+
+  const heatMapMap = new Map<string, HeatMapCell>();
+  for (const dayOfWeek of [0, 1, 2, 3, 4, 5, 6]) {
+    for (const slotIndex of BOOKABLE_SLOT_INDEXES) {
+      heatMapMap.set(`${dayOfWeek}-${slotIndex}`, { dayOfWeek, slotIndex, count: 0 });
+    }
+  }
+  for (const b of bookings) {
+    const dayOfWeek = b.date.getUTCDay();
+    const cellKey = `${dayOfWeek}-${b.slotIndex}`;
+    const cell = heatMapMap.get(cellKey);
+    if (cell) cell.count += 1;
+  }
+
+  const utilizationPercent =
+    rangeLength > 0 ? (bookings.length / (rangeLength * BOOKABLE_SLOT_INDEXES.length)) * 100 : 0;
+
+  return {
+    from: rangeFrom,
+    to: rangeTo,
+    totalBookings: bookings.length,
+    totalRevenue,
+    totalNoShows: noShowCount,
+    utilizationPercent,
+    priorTotalRevenue,
+    priorTotalBookings: priorBookings.length,
+    revenueByBucket,
+    heatMap: [...heatMapMap.values()],
+    rows: bookings.map((b) => ({
+      reference: b.reference,
+      date: b.date,
+      slotIndex: b.slotIndex,
+      status: b.status,
+      customerName: b.customer.fullName,
+      phone: b.customer.phone,
+      priceAmount: Number(b.priceAmount),
+      amountPaid: Number(b.amountPaid),
+    })),
+  };
+}

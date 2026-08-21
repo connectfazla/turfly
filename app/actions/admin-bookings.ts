@@ -19,6 +19,7 @@ import {
   updateBookingNote,
 } from '@/lib/booking-engine';
 import { requireRole } from '@/lib/auth/require-role';
+import { prisma } from '@/lib/prisma';
 import { parseDateParam } from '@/lib/format';
 import {
   cancelStaffSchema,
@@ -137,13 +138,19 @@ export async function rescheduleBookingStaffAction(input: {
   try {
     const staff = await requireRole('ADMIN', 'MODERATOR');
     const parsed = rescheduleStaffSchema.parse(input);
+
+    const previous = await prisma.booking.findUnique({
+      where: { id: parsed.bookingId },
+      select: { date: true, slotIndex: true },
+    });
+
     const booking = await rescheduleBooking({
       bookingId: parsed.bookingId,
       newDate: badDate(parsed.newDate),
       newSlotIndex: parsed.newSlotIndex,
       staffUserId: staff.id,
     });
-    void notifyBookingRescheduled(booking.id);
+    void notifyBookingRescheduled(booking.id, previous ?? undefined);
     revalidatePath('/admin');
     revalidatePath('/admin/bookings');
     revalidatePath(`/admin/bookings/${booking.id}`);
