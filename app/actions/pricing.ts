@@ -17,6 +17,7 @@ const NON_PEAK_BOOKABLE_SLOTS = ALL_SLOT_INDEXES.filter(
   (i) => i !== MAINTENANCE_SLOT && !(PEAK_SLOT_INDEXES as readonly number[]).includes(i),
 );
 
+/** Maps any thrown error into a safe, user-facing ActionResult. */
 function fail(error: unknown): ActionResult<never> {
   if (error instanceof Error && (error.name === 'UnauthorizedError' || error.name === 'ForbiddenError')) {
     return { ok: false, error: error.message, code: error.name };
@@ -28,6 +29,9 @@ function fail(error: unknown): ActionResult<never> {
   return { ok: false, error: 'Something went wrong. Please try again.' };
 }
 
+/** Bulk-applies the 4 category prices across every matching SlotRule row
+ * in one transaction, then writes a single audit entry summarizing the
+ * new values (entityId 'bulk', since no single row id applies). */
 export async function updatePricingAction(input: PricingFormInput): Promise<ActionResult<{ ok: true }>> {
   try {
     const staff = await requireRole('ADMIN');

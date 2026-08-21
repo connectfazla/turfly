@@ -33,6 +33,8 @@ import { notifyBookingCancelled, notifyBookingConfirmed } from '@/lib/notify';
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string };
 
+/** Maps any thrown error into a safe, user-facing ActionResult - a raw
+ * error message or stack trace never reaches the client. */
 function fail(error: unknown, fallback = 'Something went wrong. Please try again.'): ActionResult<never> {
   if (error instanceof BookingEngineError) {
     return { ok: false, error: error.message, code: error.code };
@@ -45,6 +47,8 @@ function fail(error: unknown, fallback = 'Something went wrong. Please try again
   return { ok: false, error: fallback };
 }
 
+/** Parses a yyyy-MM-dd form field, throwing on anything malformed rather
+ * than silently falling back to some other date. */
 function badDate(raw: string): Date {
   const date = parseDateParam(raw);
   if (!date) throw new Error('Invalid date');
@@ -59,6 +63,9 @@ export interface HoldSlotResult {
   holdExpiresAt: string; // ISO
 }
 
+/** Step 1 of the public flow: called when a visitor clicks an available
+ * slot and fills in the quick name+phone dialog. Creates the HELD row
+ * (CLAUDE.md §2 invariant 5) that /book/confirm's HoldTimer counts down. */
 export async function holdSlotAction(input: HoldSlotFormInput): Promise<ActionResult<HoldSlotResult>> {
   try {
     const parsed = holdSlotSchema.parse(input);
@@ -87,6 +94,8 @@ export interface ConfirmBookingResult {
   reference: string;
 }
 
+/** Step 2: called when the /book/confirm form is submitted. Turns the
+ * caller's own HELD row (parsed.holdId) into CONFIRMED. */
 export async function confirmBookingAction(
   input: ConfirmBookingFormInput,
 ): Promise<ActionResult<ConfirmBookingResult>> {

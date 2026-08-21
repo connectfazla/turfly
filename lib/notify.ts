@@ -11,6 +11,10 @@ import { getNotifier, type BookingNotificationPayload } from './notifications';
 
 const RETRY_DELAYS_MS = [500, 1500]; // two retries, per BUILD_PLAN step 7
 
+/** Runs `fn` up to 3 times total (1 try + 2 retries) with a short backoff
+ * between attempts, then swallows the error and logs instead of throwing.
+ * A notification that never sends must never surface as a failure to
+ * whatever Server Action called this (CLAUDE.md §4). */
 async function withRetry(fn: () => Promise<void>, label: string): Promise<void> {
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
@@ -27,6 +31,10 @@ async function withRetry(fn: () => Promise<void>, label: string): Promise<void> 
   }
 }
 
+/** Re-fetches the booking fresh (Server Actions only pass an id, not the
+ * full row) and shapes it into what the Notifier interface expects.
+ * Returns null if the booking is gone by the time this runs - notifying
+ * about a booking that no longer exists is simply skipped, not an error. */
 async function loadPayload(bookingId: string): Promise<BookingNotificationPayload | null> {
   const booking = await prisma.booking.findUnique({ where: { id: bookingId }, include: { customer: true } });
   if (!booking) return null;
@@ -41,6 +49,7 @@ async function loadPayload(bookingId: string): Promise<BookingNotificationPayloa
   };
 }
 
+/** Called after createBooking() (or confirmHeldBooking) commits. */
 export async function notifyBookingConfirmed(bookingId: string): Promise<void> {
   await withRetry(async () => {
     const payload = await loadPayload(bookingId);
@@ -49,6 +58,8 @@ export async function notifyBookingConfirmed(bookingId: string): Promise<void> {
   }, `sendBookingConfirmed(${bookingId})`);
 }
 
+/** Called after cancelBooking() commits, from either the public or staff
+ * cancel action. */
 export async function notifyBookingCancelled(bookingId: string): Promise<void> {
   await withRetry(async () => {
     const payload = await loadPayload(bookingId);
@@ -57,6 +68,10 @@ export async function notifyBookingCancelled(bookingId: string): Promise<void> {
   }, `sendBookingCancelled(${bookingId})`);
 }
 
+/** Called after rescheduleBooking() commits. `previous` is the booking's
+ * date/slot before the reschedule, captured by the caller beforehand (the
+ * booking row itself only holds the new value by the time this runs) - if
+ * omitted, the email just won't show a "moved from" line. */
 export async function notifyBookingRescheduled(
   bookingId: string,
   previous?: { date: Date; slotIndex: number },

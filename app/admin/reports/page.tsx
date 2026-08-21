@@ -1,3 +1,12 @@
+/**
+ * ROUTE: /admin/reports — ADMIN-only.
+ *
+ * Date-range summary (bookings, revenue, no-shows, utilisation) with a
+ * prior-period comparison, a revenue-by-day/week/month chart, and a slot
+ * x day-of-week utilisation heat map. All the numbers come from
+ * lib/reports.ts's buildReport(), the same function the CSV export route
+ * uses, so this page and the download always agree.
+ */
 import { buildReport, type Granularity } from '@/lib/reports';
 import { formatBDT, formatDateParam, parseDateParam } from '@/lib/format';
 import { ReportsFilterForm } from '@/components/admin/reports-filter-form';

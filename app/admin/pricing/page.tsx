@@ -1,3 +1,12 @@
+/**
+ * ROUTE: /admin/pricing — ADMIN-only (CLAUDE.md §7, enforced by
+ * middleware.ts AND re-checked inside updatePricingAction).
+ *
+ * Prices are edited by category (weekday standard/peak, weekend
+ * standard/peak), not per individual slot row - editing 112 SlotRule rows
+ * one at a time isn't a realistic UI. Saving bulk-updates every matching
+ * row in one transaction (app/actions/pricing.ts).
+ */
 import { prisma } from '@/lib/prisma';
 import { PEAK_SLOT_INDEXES } from '@/lib/slots';
 import { PricingForm } from '@/components/admin/pricing-form';

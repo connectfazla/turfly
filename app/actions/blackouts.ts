@@ -17,6 +17,7 @@ import { slotLabel, type SlotIndex } from '@/lib/slots';
 import { createBlackoutSchema, deleteBlackoutSchema, type CreateBlackoutFormInput } from '@/lib/schemas/admin';
 import type { ActionResult } from './bookings';
 
+/** Maps any thrown error into a safe, user-facing ActionResult. */
 function fail(error: unknown): ActionResult<never> {
   if (error instanceof Error && (error.name === 'UnauthorizedError' || error.name === 'ForbiddenError')) {
     return { ok: false, error: error.message, code: error.name };
@@ -34,6 +35,9 @@ export interface AffectedBooking {
   slotLabel: string;
 }
 
+/** Read-only: lists live bookings a proposed blackout would affect,
+ * without creating anything. The client shows this list and asks staff
+ * to confirm before actually calling createBlackoutAction. */
 export async function previewBlackoutImpactAction(input: {
   date: string;
   slotIndex: number | '';
@@ -68,6 +72,9 @@ export async function previewBlackoutImpactAction(input: {
   }
 }
 
+/** Creates the blackout regardless of what previewBlackoutImpactAction
+ * found - "warn, not block" (CLAUDE.md §2 invariant 8). A P2002 here
+ * means an identical (date, slotIndex) blackout already exists. */
 export async function createBlackoutAction(
   input: CreateBlackoutFormInput,
 ): Promise<ActionResult<{ id: string }>> {
@@ -106,6 +113,7 @@ export async function createBlackoutAction(
   }
 }
 
+/** Removes a blackout, immediately making its slot(s) bookable again. */
 export async function deleteBlackoutAction(input: { id: string }): Promise<ActionResult<{ id: string }>> {
   try {
     const staff = await requireRole('ADMIN', 'MODERATOR');

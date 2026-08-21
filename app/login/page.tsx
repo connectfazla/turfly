@@ -1,3 +1,11 @@
+/**
+ * ROUTE: /login — public (staff sign-in; not for Customers, who never
+ * authenticate at all - CLAUDE.md §5).
+ *
+ * middleware.ts sends unauthenticated visitors to /admin/* here, with
+ * ?callbackUrl= set to where they were headed. Already-signed-in staff
+ * are bounced straight to /admin.
+ */
 import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { auth } from '@/auth';

@@ -18,6 +18,8 @@ const currencyFormatter = new Intl.NumberFormat('en-BD', {
   maximumFractionDigits: 0,
 });
 
+/** Formats a price as "BDT 1,800". Accepts a string too because Prisma's
+ * Decimal fields serialize to strings (e.g. booking.priceAmount.toString()). */
 export function formatBDT(amount: number | string): string {
   const n = typeof amount === 'string' ? Number(amount) : amount;
   return currencyFormatter.format(n);

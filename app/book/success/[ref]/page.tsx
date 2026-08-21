@@ -1,3 +1,12 @@
+/**
+ * ROUTE: /book/success/[ref] — public, no login (ref is the booking
+ * reference, e.g. TRF-2026-0001).
+ *
+ * The receipt shown right after confirmation. Only ever renders for a
+ * CONFIRMED booking - a HELD, cancelled, or nonexistent reference 404s,
+ * since this page is a one-time confirmation, not a general booking
+ * viewer (that's /booking/lookup, which requires the phone number too).
+ */
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { SiteHeader } from '@/components/site/header';

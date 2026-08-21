@@ -1,3 +1,12 @@
+/**
+ * ROUTE: /book/confirm?holdId=&date=&slotIndex= — public, no login.
+ *
+ * Step 2 of the public flow: the visitor already holds a slot (created
+ * by holdSlot() when they clicked it on /book/[date]) and now finishes
+ * the form (email, team, note) before the 10-minute hold expires. If the
+ * hold is missing or has expired, shows a friendly message instead of a
+ * 404, since that's an expected, recoverable state, not an error.
+ */
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { SiteHeader } from '@/components/site/header';

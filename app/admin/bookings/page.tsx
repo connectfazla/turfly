@@ -1,3 +1,12 @@
+/**
+ * ROUTE: /admin/bookings — staff (ADMIN or MODERATOR).
+ *
+ * Searchable, filterable list of every booking (reference/name text
+ * search, phone, date range, status). Filters live entirely in the URL
+ * query string (?q=&phone=&status=&from=&to=) so this stays a plain
+ * Server Component read — no client fetch waterfall, and the filtered
+ * view is a shareable/bookmarkable link.
+ */
 import Link from 'next/link';
 import { Prisma, type BookingStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';

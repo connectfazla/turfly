@@ -16,6 +16,7 @@ import type { ActionResult } from './bookings';
 
 const BCRYPT_COST = 12;
 
+/** Maps any thrown error into a safe, user-facing ActionResult. */
 function fail(error: unknown): ActionResult<never> {
   if (error instanceof Error && (error.name === 'UnauthorizedError' || error.name === 'ForbiddenError')) {
     return { ok: false, error: error.message, code: error.name };
@@ -30,6 +31,8 @@ function fail(error: unknown): ActionResult<never> {
   return { ok: false, error: 'Something went wrong. Please try again.' };
 }
 
+/** Creates a new staff account. Password is hashed with the same bcrypt
+ * cost (12) as auth.ts's login check and prisma/seed.ts's seeded users. */
 export async function createUserAction(input: CreateUserFormInput): Promise<ActionResult<{ id: string }>> {
   try {
     const staff = await requireRole('ADMIN');
@@ -63,6 +66,8 @@ export async function createUserAction(input: CreateUserFormInput): Promise<Acti
   }
 }
 
+/** Enable/disable a staff account. Refuses to let an admin disable their
+ * own account, so nobody can accidentally lock themselves out. */
 export async function setUserActiveAction(input: { userId: string; isActive: boolean }): Promise<ActionResult<{ isActive: boolean }>> {
   try {
     const staff = await requireRole('ADMIN');
@@ -95,6 +100,9 @@ export async function setUserActiveAction(input: { userId: string; isActive: boo
   }
 }
 
+/** Changes a staff account's role. Refuses to let an admin demote their
+ * own account away from ADMIN, for the same self-lockout reason as
+ * setUserActiveAction above. */
 export async function changeUserRoleAction(input: { userId: string; role: 'ADMIN' | 'MODERATOR' }): Promise<ActionResult<{ role: string }>> {
   try {
     const staff = await requireRole('ADMIN');

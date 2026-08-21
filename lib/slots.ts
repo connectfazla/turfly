@@ -33,10 +33,14 @@ export interface SlotView {
 
 // ---------------------------------------------------------------- guards
 
+/** True for any integer 0..15. The one guard every other function in this
+ * file relies on before doing arithmetic with a slot index. */
 export function isValidSlotIndex(index: number): boolean {
   return Number.isInteger(index) && index >= 0 && index < SLOTS_PER_DAY;
 }
 
+/** Throws RangeError for anything isValidSlotIndex() would reject. Narrows
+ * the type to SlotIndex for the rest of the calling function. */
 export function assertValidSlotIndex(index: number): asserts index is SlotIndex {
   if (!isValidSlotIndex(index)) {
     throw new RangeError(
@@ -52,12 +56,16 @@ export function isMaintenanceSlot(index: SlotIndex): boolean {
 
 // ---------------------------------------------------------------- time
 
+/** Zeroes out the time-of-day, keeping the local calendar date. */
 function startOfDay(date: Date): Date {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
   return d;
 }
 
+/** The instant a slot begins: local midnight of `date`, plus index * 90
+ * minutes. This is the arithmetic every other time-based function here
+ * (slotEnd, hasSlotStarted, currentSlotIndex's callers) is built on. */
 export function slotStart(date: Date, index: SlotIndex): Date {
   assertValidSlotIndex(index);
   const d = startOfDay(date);
@@ -65,6 +73,8 @@ export function slotStart(date: Date, index: SlotIndex): Date {
   return d;
 }
 
+/** The instant a slot ends: exactly 90 minutes after slotStart. For slot
+ * 15 this is local midnight of the NEXT calendar day. */
 export function slotEnd(date: Date, index: SlotIndex): Date {
   const d = slotStart(date, index);
   d.setMinutes(d.getMinutes() + SLOT_MINUTES);
@@ -82,6 +92,7 @@ export function slotLabel(index: SlotIndex): string {
   return `${hhmm(from)} – ${hhmm(to)}`;
 }
 
+/** 0 -> "00:00", 90 -> "01:30", etc. Zero-padded 24-hour clock, no am/pm. */
 function hhmm(minutesFromMidnight: number): string {
   const h = Math.floor(minutesFromMidnight / 60);
   const m = minutesFromMidnight % 60;
@@ -101,6 +112,8 @@ export function currentSlotIndex(now: Date): SlotIndex {
   return Math.floor(mins / SLOT_MINUTES);
 }
 
+/** CLAUDE.md §2 invariant 4: a slot whose start time has passed cannot be
+ * booked. The boundary itself counts as started (>=, not >). */
 export function hasSlotStarted(date: Date, index: SlotIndex, now: Date): boolean {
   return slotStart(date, index).getTime() <= now.getTime();
 }
@@ -125,6 +138,7 @@ export function isPeakSlot(index: SlotIndex): boolean {
   return PEAK_SLOT_INDEXES.includes(index);
 }
 
+/** Friday and Saturday are the Bangladesh weekend, not Saturday/Sunday. */
 export function isWeekend(date: Date): boolean {
   const d = date.getDay(); // 0 Sun … 6 Sat
   return d === 5 || d === 6; // Fri–Sat weekend. CHANGE THIS if your venue differs.

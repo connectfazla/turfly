@@ -46,6 +46,9 @@ export function dateOnly(d: Date): Date {
   return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
 }
 
+/** `excludeBookingId` leaves one booking out of the "booked" check - used
+ * by rescheduleBooking() so a booking never counts as blocking its own
+ * old slot when checking whether its new slot is free. */
 export async function fetchDayAvailability(
   db: DbClient,
   date: Date,

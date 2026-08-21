@@ -1,3 +1,12 @@
+/**
+ * ROUTE: /admin (dashboard) — staff (ADMIN or MODERATOR).
+ *
+ * The "DayTimeline": all 16 slots for one day (default today, ?date=
+ * to browse others), the current slot highlighted, each occupied row
+ * showing the customer, phone, payment status, and a one-tap check-in.
+ * Runs an opportunistic CONFIRMED -> COMPLETED sweep (lib/completion.ts)
+ * before reading, since there's no cron in a project this size.
+ */
 import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
 import { dateOnly } from '@/lib/availability-service';

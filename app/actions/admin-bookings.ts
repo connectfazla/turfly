@@ -35,6 +35,9 @@ import {
 import { notifyBookingCancelled, notifyBookingConfirmed, notifyBookingRescheduled } from '@/lib/notify';
 import type { ActionResult } from './bookings';
 
+/** Maps any error thrown by requireRole(), a Zod schema, or the booking
+ * engine into a safe, user-facing ActionResult - never lets a raw error
+ * (with a stack trace or internal detail) reach the client. */
 function fail(error: unknown): ActionResult<never> {
   if (error instanceof BookingEngineError) {
     return { ok: false, error: error.message, code: error.code };
@@ -49,12 +52,16 @@ function fail(error: unknown): ActionResult<never> {
   return { ok: false, error: 'Something went wrong. Please try again.' };
 }
 
+/** Parses a yyyy-MM-dd form field into a Date, throwing (caught by
+ * fail() above) rather than silently booking the wrong day on bad input. */
 function badDate(raw: string) {
   const date = parseDateParam(raw);
   if (!date) throw new Error('Invalid date');
   return date;
 }
 
+/** Staff counter booking: goes straight to CONFIRMED, source COUNTER,
+ * skips the public 2-active-booking limit (CLAUDE.md §2 invariant 6). */
 export async function createCounterBookingAction(
   input: CounterBookingFormInput,
 ): Promise<ActionResult<{ reference: string }>> {
@@ -82,6 +89,7 @@ export async function createCounterBookingAction(
   }
 }
 
+/** One-tap check-in from the DayTimeline row or the booking detail page. */
 export async function checkInBookingAction(input: { bookingId: string }): Promise<ActionResult<{ status: string }>> {
   try {
     const staff = await requireRole('ADMIN', 'MODERATOR');
@@ -95,6 +103,8 @@ export async function checkInBookingAction(input: { bookingId: string }): Promis
   }
 }
 
+/** Only ever available once the slot has started - see markNoShow() in
+ * lib/booking-engine.ts for that guard. */
 export async function markNoShowAction(input: { bookingId: string }): Promise<ActionResult<{ status: string }>> {
   try {
     const staff = await requireRole('ADMIN', 'MODERATOR');
@@ -108,6 +118,9 @@ export async function markNoShowAction(input: { bookingId: string }): Promise<Ac
   }
 }
 
+/** Unlike the public cancel action, staff can cancel at any time - no
+ * 6-hour window check (CLAUDE.md §2 invariant 7: "staff only" after that
+ * window closes). */
 export async function cancelBookingStaffAction(input: {
   bookingId: string;
   reason?: string;
@@ -130,6 +143,10 @@ export async function cancelBookingStaffAction(input: {
   }
 }
 
+/** Staff-only reschedule (CLAUDE.md §5: no public route for this). Reads
+ * the booking's CURRENT date/slot before calling the engine, purely so
+ * the confirmation email can say "moved from X to Y" - the engine itself
+ * only returns the row's new state, not what it used to be. */
 export async function rescheduleBookingStaffAction(input: {
   bookingId: string;
   newDate: string;
@@ -160,6 +177,8 @@ export async function rescheduleBookingStaffAction(input: {
   }
 }
 
+/** Appends one Payment row; a booking can have several (part-payment,
+ * balance, refund) so this never overwrites, only adds. */
 export async function recordPaymentAction(input: RecordPaymentFormInput): Promise<ActionResult<{ paymentStatus: string }>> {
   try {
     const staff = await requireRole('ADMIN', 'MODERATOR');
@@ -178,6 +197,7 @@ export async function recordPaymentAction(input: RecordPaymentFormInput): Promis
   }
 }
 
+/** Staff-only annotation, never shown to the customer. */
 export async function updateBookingNoteAction(input: {
   bookingId: string;
   internalNote: string;

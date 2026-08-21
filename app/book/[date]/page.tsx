@@ -1,3 +1,13 @@
+/**
+ * ROUTE: /book/[date] — public, no login (date param is yyyy-MM-dd).
+ *
+ * This is the ONE real implementation of the booking page; /book just
+ * redirects here with today's date. Renders the DateStrip and SlotGrid
+ * for first paint as a Server Component (no client fetch waterfall,
+ * CLAUDE.md §4) using fetchDayAvailability(), the same function every
+ * other availability display in the app uses. Out-of-window dates (past,
+ * or beyond BOOKING_WINDOW_DAYS) redirect back to the nearest valid date.
+ */
 import { notFound, redirect } from 'next/navigation';
 import { SiteHeader } from '@/components/site/header';
 import { SiteFooter } from '@/components/site/footer';

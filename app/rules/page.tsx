@@ -1,3 +1,10 @@
+/**
+ * ROUTE: /rules — public, no login.
+ *
+ * Plain informational page: booking policy plus the venue's own text
+ * (VenueSetting.rulesText, editable from the database so the owner can
+ * update it without a redeploy) and contact details.
+ */
 import { SiteHeader } from '@/components/site/header';
 import { SiteFooter } from '@/components/site/footer';
 import { prisma } from '@/lib/prisma';

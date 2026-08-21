@@ -1,3 +1,10 @@
+/**
+ * ROUTE: /admin/calendar — staff (ADMIN or MODERATOR).
+ *
+ * A month-at-a-glance view: each day shows its free-slot count (via the
+ * same fetchDayAvailability() the public page and JSON API use) and links
+ * into the /admin dashboard for that specific date.
+ */
 import Link from 'next/link';
 import { fetchDayAvailability } from '@/lib/availability-service';
 import { prisma } from '@/lib/prisma';

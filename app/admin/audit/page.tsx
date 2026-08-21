@@ -1,3 +1,12 @@
+/**
+ * ROUTE: /admin/audit — Admin-only (CLAUDE.md §7, enforced by middleware.ts).
+ *
+ * Read-only, append-only log of every mutation the app has ever made:
+ * who (actor), what (action), on what (entity), and a before/after diff.
+ * Rows are written by app/actions/*.ts as part of the SAME transaction as
+ * the mutation itself (see lib/booking-engine.ts's writeAudit helper) —
+ * this page never writes anything, only reads.
+ */
 import { prisma } from '@/lib/prisma';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';

@@ -57,10 +57,15 @@ export interface ReportRow {
   amountPaid: number;
 }
 
+/** Inclusive day count between two UTC-midnight dates (e.g. Mon..Mon = 1,
+ * Mon..Tue = 2). Used both for the range itself and to size the matching
+ * "prior period" comparison window. */
 function daysInRange(from: Date, to: Date): number {
   return Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
 }
 
+/** Groups a booking's date into a day/week/month bucket. `key` sorts
+ * correctly as a plain string; `label` is what the chart actually shows. */
 function bucketKey(date: Date, granularity: Granularity): { key: string; label: string } {
   if (granularity === 'day') {
     const key = date.toISOString().slice(0, 10);
@@ -77,6 +82,9 @@ function bucketKey(date: Date, granularity: Granularity): { key: string; label: 
   return { key, label };
 }
 
+/** The one function behind /admin/reports and its CSV export - see the
+ * module doc comment at the top of this file for what "revenue" and
+ * "utilisation" mean here. */
 export async function buildReport(from: Date, to: Date, granularity: Granularity): Promise<ReportSummary> {
   const rangeFrom = dateOnly(from);
   const rangeTo = dateOnly(to);

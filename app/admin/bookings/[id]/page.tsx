@@ -1,3 +1,12 @@
+/**
+ * ROUTE: /admin/bookings/[id] — staff (ADMIN or MODERATOR).
+ *
+ * One booking's full detail and every action that can be taken on it:
+ * check in, mark no-show, cancel (all through ConfirmDialog, restating the
+ * booking), record a payment, reschedule, and edit the internal note.
+ * Each control only renders when the booking's current status permits
+ * that transition (see CLAUDE.md §5's transition table).
+ */
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
 import { formatBDT, formatDateLong, formatDateParam } from '@/lib/format';

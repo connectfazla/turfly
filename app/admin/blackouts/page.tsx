@@ -1,3 +1,12 @@
+/**
+ * ROUTE: /admin/blackouts — staff (ADMIN or MODERATOR).
+ *
+ * Close the whole day or a single slot ahead of time (CLAUDE.md §2
+ * invariant 8: "Blackouts override availability"). Creating one shows a
+ * warning listing any existing live bookings it would affect, but never
+ * cancels them automatically — staff decide what to do with those
+ * separately from /admin/bookings.
+ */
 import { prisma } from '@/lib/prisma';
 import { formatDateLong } from '@/lib/format';
 import { slotLabel, type SlotIndex } from '@/lib/slots';

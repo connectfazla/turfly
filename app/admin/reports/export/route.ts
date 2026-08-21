@@ -1,3 +1,13 @@
+/**
+ * ROUTE: GET /admin/reports/export?from=&to= — ADMIN-only.
+ *
+ * A route handler rather than a Server Action because the browser needs
+ * to download a file, not receive a JSON result (CLAUDE.md §4 restricts
+ * "hand-written POST route handlers" to booking operations; this is a
+ * plain GET download, which is exactly what route handlers are for).
+ * Reuses lib/reports.ts's buildReport() so the CSV always matches what
+ * the /admin/reports page itself shows for the same range.
+ */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/require-role';
 import { parseDateParam } from '@/lib/format';
@@ -6,6 +16,8 @@ import { buildReport } from '@/lib/reports';
 
 export const dynamic = 'force-dynamic';
 
+/** Quotes a CSV field only when it contains a character that would
+ * otherwise break column alignment (comma, quote, or newline). */
 function csvEscape(value: string): string {
   if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
   return value;

@@ -1,3 +1,11 @@
+/**
+ * ROUTE: /admin/bookings/new — staff (ADMIN or MODERATOR).
+ *
+ * The counter-booking form: staff book directly on behalf of a walk-in or
+ * phone customer. Goes straight to CONFIRMED (no HELD step, unlike the
+ * public flow) and, unlike the public flow, does not count toward the
+ * customer's 2-active-booking limit (CLAUDE.md §2 invariant 6).
+ */
 import { CounterBookingForm } from '@/components/admin/counter-booking-form';
 
 export default function NewCounterBookingPage() {

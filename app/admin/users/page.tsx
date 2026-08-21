@@ -1,3 +1,11 @@
+/**
+ * ROUTE: /admin/users — ADMIN-only.
+ *
+ * Create staff accounts, enable/disable them, and change role between
+ * ADMIN and MODERATOR. Every control here guards against an admin
+ * locking themselves out (disabling or demoting their own account is
+ * refused - see app/actions/users.ts).
+ */
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';

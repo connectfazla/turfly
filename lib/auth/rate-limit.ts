@@ -14,6 +14,10 @@ interface Bucket {
 
 const buckets = new Map<string, Bucket>();
 
+/** Records one attempt for `key` and returns whether it should be
+ * refused. A sliding window would be more precise, but a fixed window
+ * that resets WINDOW_MS after the FIRST attempt in it is simpler and
+ * good enough for a login form. */
 export function isRateLimited(key: string, now: number = Date.now()): boolean {
   const bucket = buckets.get(key);
   if (!bucket || now - bucket.windowStart > WINDOW_MS) {

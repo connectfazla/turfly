@@ -1,3 +1,9 @@
+/**
+ * ROUTE: / (home) — public, no login.
+ *
+ * The marketing landing page. Nothing here mutates data; the venue name
+ * is the only piece of live content (read from VenueSetting).
+ */
 import Link from 'next/link';
 import Image from 'next/image';
 import { SiteHeader } from '@/components/site/header';

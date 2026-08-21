@@ -95,6 +95,8 @@ const CANCELLATION_WINDOW_HOURS = Number(process.env.CANCELLATION_WINDOW_HOURS ?
 const PRISMA_UNIQUE_VIOLATION = 'P2002';
 const PRISMA_WRITE_CONFLICT = 'P2034'; // serialization failure or deadlock, under Serializable isolation
 
+/** Type-narrows a caught error to Prisma's own error class and checks its
+ * error code (e.g. 'P2002' for a unique-constraint violation). */
 function isPrismaKnownError(err: unknown, code: string): boolean {
   return (
     err instanceof Prisma.PrismaClientKnownRequestError && err.code === code
@@ -164,6 +166,12 @@ async function sweepExpiredHolds(tx: Tx, now: Date): Promise<void> {
   });
 }
 
+/** Finds-or-creates the Customer for this phone number, refreshing name/
+ * email/team on every call (a returning customer's details stay current
+ * without a separate "edit profile" flow - they just don't overwrite an
+ * existing email/team with nothing when those fields are left blank).
+ * Throws CustomerBlockedError before touching anything else if staff have
+ * blocked this phone number. */
 async function upsertCustomer(
   tx: Tx,
   input: { phone: string; fullName: string; email?: string | null; teamName?: string | null },
@@ -202,6 +210,12 @@ async function nextReference(tx: Tx, now: Date): Promise<string> {
   return `${prefix}${String(count + 1).padStart(4, '0')}`;
 }
 
+/** CLAUDE.md §2 invariant 6: max 2 active future bookings per phone
+ * number via the public page (staff/COUNTER bookings skip this check
+ * entirely - see createFreshConfirmedBooking). "Active future" = CONFIRMED
+ * and not yet started; fetched then filtered in JS rather than in SQL so
+ * the exact-slot-start comparison stays on the same TZ-safe footing as
+ * the rest of the app (see lib/availability-service.ts's dateOnly doc). */
 async function countActiveBookings(tx: Tx, customerId: string, now: Date): Promise<number> {
   const today = dateOnly(now);
   const candidates = await tx.booking.findMany({
@@ -211,6 +225,10 @@ async function countActiveBookings(tx: Tx, customerId: string, now: Date): Promi
   return candidates.filter((b) => !hasSlotStarted(b.date, b.slotIndex as SlotIndex, now)).length;
 }
 
+/** Every mutation in this file ends with a call to this, inside the same
+ * transaction as the mutation itself - CLAUDE.md §9's "audit row written
+ * for any mutation" is enforced structurally here, not by remembering to
+ * call it from every Server Action separately. */
 async function writeAudit(
   tx: Tx,
   params: {
@@ -313,6 +331,15 @@ export interface CreateFreshBookingInput extends CreateBookingCommon {
 
 export type CreateBookingInput = ConfirmHeldBookingInput | CreateFreshBookingInput;
 
+/** Discriminates the two CreateBookingInput shapes by whether holdId was
+ * given. A dedicated type guard rather than an inline `if` because TS
+ * does not preserve `if (input.holdId)` narrowing of an outer-scope
+ * parameter across the nested transaction closure below - see the
+ * comment at each call site. */
+function isConfirmHeldInput(input: CreateBookingInput): input is ConfirmHeldBookingInput {
+  return typeof input.holdId === 'string';
+}
+
 /**
  * HELD -> CONFIRMED (public, via holdId) or — -> CONFIRMED (counter
  * booking, staff, no holdId). Either way: sweep expired holds, assert
@@ -320,10 +347,6 @@ export type CreateBookingInput = ConfirmHeldBookingInput | CreateFreshBookingInp
  * limit (skipped for COUNTER), generate the reference (fresh-insert path
  * only — a held row already has one), create/confirm the row, write audit.
  */
-function isConfirmHeldInput(input: CreateBookingInput): input is ConfirmHeldBookingInput {
-  return typeof input.holdId === 'string';
-}
-
 export async function createBooking(input: CreateBookingInput): Promise<Booking> {
   assertValidSlotIndex(input.slotIndex);
   const now = input.now ?? new Date();
@@ -344,6 +367,9 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
   });
 }
 
+/** The holdId branch of createBooking: turns an existing HELD row into
+ * CONFIRMED. Validates the hold still belongs to this exact (date,
+ * slotIndex) and hasn't expired before touching anything. */
 async function confirmHeldBooking(
   tx: Tx,
   input: ConfirmHeldBookingInput,
@@ -391,6 +417,10 @@ async function confirmHeldBooking(
   return booking;
 }
 
+/** The no-holdId branch of createBooking: inserts a brand new CONFIRMED
+ * row directly. This is the path the concurrency test exercises (20 of
+ * these racing for the same slot), since it's the one that actually hits
+ * the partial unique index on INSERT. */
 async function createFreshConfirmedBooking(
   tx: Tx,
   input: CreateFreshBookingInput,
@@ -690,6 +720,9 @@ export interface UpdateBookingNoteInput {
   staffUserId: string;
 }
 
+/** Staff-only internal note - never shown to the customer (that's
+ * customerNote instead, which the customer themselves writes). No status
+ * restriction: staff can annotate a booking regardless of its state. */
 export async function updateBookingNote(input: UpdateBookingNoteInput): Promise<Booking> {
   return prisma.$transaction(async (tx) => {
     const booking = await tx.booking.findUnique({ where: { id: input.bookingId } });

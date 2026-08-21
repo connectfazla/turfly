@@ -1,3 +1,12 @@
+/**
+ * ROUTE: /admin/customers — staff (ADMIN or MODERATOR).
+ *
+ * Every Customer (public visitors keyed by phone, never Users - CLAUDE.md
+ * §5) with their lifetime booking total, no-show count, and a block /
+ * unblock control. A blocked customer is refused new bookings on the
+ * public page (see CustomerBlockedError in lib/booking-engine.ts) but
+ * staff can still book for them at the counter.
+ */
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';

@@ -1,5 +1,11 @@
 'use server';
 
+/**
+ * Customer Server Actions, used by /admin/customers. Blocking/unblocking
+ * doesn't go through lib/booking-engine.ts (it's not a Booking mutation)
+ * but still follows the same shape: role check, schema parse, transaction
+ * with an audit row, then revalidate.
+ */
 import { revalidatePath } from 'next/cache';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
@@ -7,6 +13,7 @@ import { requireRole } from '@/lib/auth/require-role';
 import { blockCustomerSchema, unblockCustomerSchema } from '@/lib/schemas/admin';
 import type { ActionResult } from './bookings';
 
+/** Maps any thrown error into a safe, user-facing ActionResult. */
 function fail(error: unknown): ActionResult<never> {
   if (error instanceof Error && (error.name === 'UnauthorizedError' || error.name === 'ForbiddenError')) {
     return { ok: false, error: error.message, code: error.name };
@@ -15,6 +22,9 @@ function fail(error: unknown): ActionResult<never> {
   return { ok: false, error: 'Something went wrong. Please try again.' };
 }
 
+/** Blocks a customer from booking online (CustomerBlockedError in
+ * lib/booking-engine.ts is what actually enforces this at booking time).
+ * Staff can still book for a blocked customer at the counter. */
 export async function blockCustomerAction(input: {
   customerId: string;
   reason: string;
@@ -49,6 +59,7 @@ export async function blockCustomerAction(input: {
   }
 }
 
+/** Reverses blockCustomerAction. */
 export async function unblockCustomerAction(input: { customerId: string }): Promise<ActionResult<{ isBlocked: boolean }>> {
   try {
     const staff = await requireRole('ADMIN', 'MODERATOR');

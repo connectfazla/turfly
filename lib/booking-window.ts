@@ -5,10 +5,16 @@
  */
 const BOOKING_WINDOW_DAYS = Number(process.env.BOOKING_WINDOW_DAYS ?? 14);
 
+/** Local-midnight of the given date, same calendar day. This module's own
+ * copy, separate from lib/availability-service.ts's dateOnly() — that one
+ * builds UTC-midnight for the Prisma boundary; this one only ever compares
+ * against other local-midnight Dates within this file, so it doesn't need
+ * the UTC conversion. */
 function dateOnly(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+/** "Today", floored to local midnight. */
 export function todayDate(now: Date = new Date()): Date {
   return dateOnly(now);
 }
@@ -23,6 +29,8 @@ export function bookingWindowDates(now: Date = new Date()): Date[] {
   });
 }
 
+/** True for any date from today through today + (BOOKING_WINDOW_DAYS - 1),
+ * inclusive. Used to reject stale or too-far-future /book/[date] links. */
 export function isWithinBookingWindow(date: Date, now: Date = new Date()): boolean {
   const today = todayDate(now);
   const diffDays = Math.round((dateOnly(date).getTime() - today.getTime()) / 86_400_000);
