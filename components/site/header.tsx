@@ -27,11 +27,11 @@ export async function SiteHeader() {
           <Link href="/rules" className="hover:text-text">
             Rules
           </Link>
-          {/* Clerk covers the new tenant/customer-facing account layer -
-           * staff/admin login is unrelated and still lives at /login
-           * (Auth.js), unaffected by this. Nothing here is enforced yet;
-           * these controls are the visible entry point while that layer
-           * is built out. */}
+          {/* Customer accounts are optional: booking never requires one
+           * (CLAUDE.md §5), and these controls only exist so a customer who
+           * wants a cross-venue "my bookings" view can link one. Staff and
+           * owners sign in through the same Clerk instance but land on
+           * /admin via their own routes, not from here. */}
           <Show when="signed-out">
             <SignInButton mode="modal">
               <button className="hover:text-text">Sign in</button>

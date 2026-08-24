@@ -19,8 +19,8 @@ Production:
 | Variable | Notes |
 |---|---|
 | `DATABASE_URL` | Neon's pooled connection string |
-| `AUTH_SECRET` | Generate with `openssl rand -base64 32` — a fresh one, never reused from `.env` |
-| `AUTH_URL` | your production URL, e.g. `https://turfly.example.com` |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk publishable key for the production instance |
+| `CLERK_SECRET_KEY` | Clerk secret key for the production instance — never the dev one |
 | `RESEND_API_KEY` | from resend.com, once you own the sending domain |
 | `SMS_API_KEY` | reserved — no SMS provider is wired up yet (see `lib/notifications/`) |
 | `NOTIFICATIONS_ENABLED` | `true` in production |

@@ -1,23 +1,25 @@
 /**
- * Seeds: 112 SlotRule rows (7 days × 16 slots, slotIndex 4 unbookable on
- * every day, with default pricing), one ADMIN user, one MODERATOR user.
- * Idempotent — safe to re-run.
+ * Seeds 112 SlotRule rows (7 days × 16 slots, slotIndex 4 unbookable on
+ * every day, with default pricing). Idempotent — safe to re-run.
  *
- * Does NOT create a Venue (that was VenueSetting's job pre-multi-tenant —
- * see prisma/schema.prisma's bottom note). On a fresh database, run
- * `tsx scripts/backfill-tenant-zero.ts` AFTER this script: it creates
- * "Venue Zero" and backfills venueId onto every SlotRule row this script
- * just created (and any Booking/Blackout/Payment/AuditLog rows, though a
- * fresh DB has none of those yet).
+ * Deliberately seeds NO staff accounts. Authentication is Clerk's now, so
+ * there is no password for this script to hash and no way to conjure a
+ * Clerk identity from a seed script. On a fresh database the first staff
+ * member is created by binding a real Clerk account:
+ *
+ *   OPERATOR_CLERK_USER_ID=user_xxx OPERATOR_EMAIL=you@example.com \
+ *   pnpm exec tsx scripts/bind-operator-clerk-user.ts
+ *
+ * Does NOT create a Venue either (that was VenueSetting's job
+ * pre-multi-tenant — see prisma/schema.prisma's bottom note). On a fresh
+ * database run `tsx scripts/backfill-tenant-zero.ts` AFTER this script: it
+ * creates "Venue Zero" and adopts the SlotRule rows seeded here.
  */
 import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcryptjs';
 import { seedSlotRulesForVenue, SLOT_RULES_PER_VENUE } from '../lib/provisioning';
 import { DEFAULT_VENUE_SLUG } from '../lib/tenant';
 
 const prisma = new PrismaClient();
-
-const BCRYPT_COST = 12;
 
 async function seedSlotRules() {
   // The grid itself now lives in lib/provisioning.ts so the owner-onboarding
@@ -36,45 +38,13 @@ async function seedSlotRules() {
   );
 }
 
-async function seedUsers() {
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'Admin123!';
-  const moderatorPassword = process.env.SEED_MODERATOR_PASSWORD ?? 'Moderator123!';
-
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@turf.local' },
-    update: {},
-    create: {
-      email: 'admin@turf.local',
-      name: 'Owner',
-      role: 'ADMIN',
-      passwordHash: await bcrypt.hash(adminPassword, BCRYPT_COST),
-    },
-  });
-
-  const moderator = await prisma.user.upsert({
-    where: { email: 'moderator@turf.local' },
-    update: {},
-    create: {
-      email: 'moderator@turf.local',
-      name: 'Counter Staff',
-      role: 'MODERATOR',
-      passwordHash: await bcrypt.hash(moderatorPassword, BCRYPT_COST),
-    },
-  });
-
-  console.log(`  User: ${admin.email} (ADMIN), ${moderator.email} (MODERATOR)`);
-  if (!process.env.SEED_ADMIN_PASSWORD) {
-    console.log(
-      `  Dev credentials — admin@turf.local / ${adminPassword}, moderator@turf.local / ${moderatorPassword} (set SEED_ADMIN_PASSWORD / SEED_MODERATOR_PASSWORD to override)`,
-    );
-  }
-}
-
 async function main() {
   console.log('Seeding...');
   await seedSlotRules();
-  await seedUsers();
-  console.log('Done. Run `tsx scripts/backfill-tenant-zero.ts` next to create the default Venue.');
+  console.log(
+    'Done. Next: `tsx scripts/backfill-tenant-zero.ts` to create the default Venue,\n' +
+      'then `tsx scripts/bind-operator-clerk-user.ts` to bind your Clerk account as owner.',
+  );
 }
 
 main()

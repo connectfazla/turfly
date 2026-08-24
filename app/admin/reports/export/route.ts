@@ -27,7 +27,7 @@ function csvEscape(value: string): string {
  * as the rest of /admin/reports. */
 export async function GET(request: NextRequest) {
   try {
-    await requireRole('ADMIN');
+    await requireRole('OWNER', 'MANAGER');
   } catch {
     return NextResponse.json({ error: 'Not authorized.' }, { status: 403 });
   }

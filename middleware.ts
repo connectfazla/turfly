@@ -1,53 +1,45 @@
-import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
-import { NextResponse, type NextRequest } from 'next/server';
-import { auth } from '@/auth';
+import { clerkMiddleware } from '@clerk/nextjs/server';
+import { NextResponse } from 'next/server';
 
-/** The four Admin-only routes — CLAUDE.md §7. Everything else under
- * /admin/* just needs any authenticated staff session. */
-const ADMIN_ONLY_PREFIXES = ['/admin/pricing', '/admin/reports', '/admin/users', '/admin/audit'];
+/**
+ * Every staff/owner/platform surface. Middleware's ONLY job here is "is
+ * somebody signed in" — it deliberately does no role check and reads no
+ * database.
+ *
+ * The role check used to live here as an ADMIN_ONLY_PREFIXES list. It
+ * moved to the pages themselves (`await requireRole('OWNER')` at the top of
+ * each) because a role is now resolved from Tenant/VenueStaff/PlatformAdmin
+ * rows, and a per-request Prisma query in middleware is both slow and the
+ * wrong place for it. Four single-file routes, four one-line guards,
+ * colocated with what they protect — which is what CLAUDE.md §7 asks for
+ * anyway ("re-check the role inside every action — middleware alone is not
+ * authorisation").
+ */
+const PROTECTED_PREFIXES = ['/admin', '/dashboard', '/super-admin', '/onboarding'];
 
-/** The pre-existing Auth.js staff/admin guard — unchanged in behavior from
- * before Clerk was added. Kept as a plain function (rather than the
- * top-level `export default`) so it can be delegated to from inside
- * clerkMiddleware below. Clerk only covers the new tenant/customer-facing
- * auth layer added alongside this; staff/admin login stays on Auth.js. */
-const requireStaffSession = auth((req) => {
+/**
+ * Plain prefix matching rather than Clerk's createRouteMatcher, which is
+ * deprecated: it warns that path matching in middleware can diverge from
+ * how Next.js actually routes a request, leaving a protected resource
+ * reachable. That warning is exactly right, and the answer is not a better
+ * matcher — it is to not rely on this as the authorisation boundary at all.
+ *
+ * What this does is a redirect convenience: send a signed-out visitor to
+ * sign-in instead of letting them hit a page that throws. The ACTUAL gate
+ * is resource-based, in app/admin/layout.tsx and in every page and Server
+ * Action beneath it, all of which call requireRole() against the database.
+ * If this matcher ever missed a route, the page would still refuse — it
+ * would just refuse with an error instead of a tidy redirect.
+ */
+export default clerkMiddleware(async (clerkAuth, req) => {
   const { pathname } = req.nextUrl;
-
-  if (!req.auth) {
-    const loginUrl = new URL('/login', req.nextUrl.origin);
-    loginUrl.searchParams.set('callbackUrl', pathname);
-    return NextResponse.redirect(loginUrl);
-  }
-
-  const isAdminOnly = ADMIN_ONLY_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
-  if (isAdminOnly && req.auth.user.role !== 'ADMIN') {
-    return NextResponse.redirect(new URL('/admin?forbidden=1', req.nextUrl.origin));
-  }
-
-  return NextResponse.next();
-});
-
-const isAdminRoute = createRouteMatcher(['/admin(.*)']);
-
-// clerkMiddleware wraps every matched request so Clerk's session context is
-// available anywhere the future tenant/customer pages need it (via auth()
-// or the Clerk components) — it does NOT itself protect any route. Admin
-// routes are handed off to the existing Auth.js guard above, unchanged.
-export default clerkMiddleware(async (_clerkAuth, req: NextRequest, event) => {
-  if (isAdminRoute(req)) {
-    // auth()'s wrapped-callback type covers both the middleware signature
-    // (req, NextFetchEvent) and the Route Handler signature (req, {params}),
-    // and TS resolves the union to the latter here — but requireStaffSession's
-    // own callback above never reads its second argument either way, so this
-    // cast is safe: no behavior depends on what's actually passed through.
-    return requireStaffSession(req, event as unknown as Parameters<typeof requireStaffSession>[1]);
+  const isProtected = PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  if (isProtected) {
+    await clerkAuth.protect();
   }
   return NextResponse.next();
 });
 
-// Middleware alone is NOT authorisation (CLAUDE.md §7) — every staff
-// Server Action re-checks via lib/auth/require-role.ts regardless of this.
 export const config = {
   matcher: [
     // Clerk's recommended default: skip Next.js internals and static
@@ -56,10 +48,9 @@ export const config = {
     '/(api|trpc)(.*)',
     '/__clerk/:path*',
   ],
-  // Auth.js's JWT decoding (jose) uses Node APIs (Compression/DecompressionStream)
-  // the Edge runtime doesn't support — harmless for our small session payloads,
-  // but Next.js 15's Node.js middleware runtime avoids the warning entirely.
-  // Clerk also supports the Node.js middleware runtime, so this still covers
-  // both.
+  // Node.js runtime rather than Edge: Clerk supports it, and it keeps the
+  // door open for middleware that needs Node APIs. (It was originally set
+  // to silence an Auth.js/jose warning; that reason is gone, the setting is
+  // still the right default here.)
   runtime: 'nodejs',
 };

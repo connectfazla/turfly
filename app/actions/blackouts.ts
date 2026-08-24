@@ -44,7 +44,7 @@ export async function previewBlackoutImpactAction(input: {
   slotIndex: number | '';
 }): Promise<ActionResult<{ affected: AffectedBooking[] }>> {
   try {
-    await requireRole('ADMIN', 'MODERATOR');
+    await requireRole();
     const date = parseDateParam(input.date);
     if (!date) throw new Error('Invalid date');
     const day = dateOnly(date);
@@ -80,7 +80,7 @@ export async function createBlackoutAction(
   input: CreateBlackoutFormInput,
 ): Promise<ActionResult<{ id: string }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole();
     const parsed = createBlackoutSchema.parse(input);
     const date = parseDateParam(parsed.date);
     if (!date) throw new Error('Invalid date');
@@ -124,7 +124,7 @@ export async function createBlackoutAction(
 /** Removes a blackout, immediately making its slot(s) bookable again. */
 export async function deleteBlackoutAction(input: { id: string }): Promise<ActionResult<{ id: string }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole();
     const parsed = deleteBlackoutSchema.parse(input);
 
     await prisma.$transaction(async (tx) => {

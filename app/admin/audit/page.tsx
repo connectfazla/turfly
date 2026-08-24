@@ -10,6 +10,7 @@
 import { prisma } from '@/lib/prisma';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { requireRole } from '@/lib/auth/require-role';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,6 +34,9 @@ function diffSummary(before: unknown, after: unknown): string {
 }
 
 export default async function AdminAuditPage() {
+  // OWNER-only route. This is the real gate: middleware only proves
+  // somebody is signed in, and the sidebar hiding the link is cosmetic.
+  await requireRole('OWNER');
   const entries = await prisma.auditLog.findMany({
     include: { actor: true },
     orderBy: { createdAt: 'desc' },

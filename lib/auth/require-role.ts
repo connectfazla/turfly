@@ -1,5 +1,24 @@
-import type { Role } from '@prisma/client';
-import { auth } from '@/auth';
+/**
+ * The re-check every staff Server Action must call — CLAUDE.md §7.
+ * Middleware is the first gate, but it is NOT authorisation: it only proves
+ * *someone* is signed in. This resolves *who*, *at which venue*, and *with
+ * what power*, against our own database.
+ *
+ * Authentication is Clerk's. Authorization is ours. `requireRole` never
+ * denies on the basis of Clerk's `orgId`/`orgRole` — it reads
+ * Tenant.ownerClerkUserId, VenueStaff and PlatformAdmin directly. That is a
+ * deliberate choice: it means a lagging Clerk webhook, a failed
+ * organization creation, or an unset active org can never lock an owner out
+ * of their own dashboard. Clerk Organizations exist for hosted invitations
+ * and org switching, nothing more.
+ *
+ * Call with no roles to require any staff access to the active venue; pass
+ * roles to restrict further (e.g. `requireRole('OWNER')`).
+ */
+import { auth, currentUser } from '@clerk/nextjs/server';
+import type { User, VenueStaffRole } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
+import { getDefaultVenueId } from '@/lib/tenant';
 
 export class UnauthorizedError extends Error {
   constructor(message = 'You must be signed in.') {
@@ -15,31 +34,124 @@ export class ForbiddenError extends Error {
   }
 }
 
+/**
+ * OWNER is derived, never stored: it comes from Tenant.ownerClerkUserId (or
+ * a PlatformAdmin row), which is why VenueStaffRole only has MANAGER and
+ * BOOKIE. Keeping OWNER out of the enum also keeps every future migration
+ * free of the "add an enum value and use it in the same transaction"
+ * Postgres trap — see prisma/schema.prisma's bottom note.
+ */
+export type StaffRole = 'OWNER' | 'MANAGER' | 'BOOKIE';
+
 export interface StaffUser {
+  /** User.id — the FK anchor for Booking.createdById, AuditLog.actorId, etc. */
   id: string;
+  clerkUserId: string;
   email: string;
   name: string;
-  role: Role;
+  role: StaffRole;
+  /** The venue this call is scoped to. Every venue-scoped query should filter on it. */
+  venueId: string;
+  tenantId: string;
 }
 
 /**
- * The re-check every staff Server Action must call — CLAUDE.md §7:
- * "Re-check the role inside every action — middleware alone is not
- * authorisation." Call with no roles to require any authenticated staff
- * session; pass specific roles to restrict further (e.g. `requireRole('ADMIN')`).
+ * SECURITY-CRITICAL. Finds the local staff row for a Clerk account, binding
+ * the two together on first sign-in.
+ *
+ * The binding path is the one place where an unauthenticated-to-us stranger
+ * can become a known staff member, so it is deliberately narrow. It binds
+ * ONLY when all of:
+ *
+ *   1. Clerk reports the account's primary email as `verified` — otherwise
+ *      anyone could sign up claiming a staff member's address and inherit
+ *      their role and audit identity.
+ *   2. That address matches User.invitedEmail — NOT User.email. `email` is
+ *      editable for display; if binding keyed on it, editing a display
+ *      address would silently widen who may claim the row.
+ *   3. The row is not already bound to some other Clerk account.
+ *
+ * Do not relax any of these three. Together they are the difference between
+ * "an invited person claims their account" and "anyone who knows a staff
+ * email address becomes that person".
  */
-export async function requireRole(...roles: Role[]): Promise<StaffUser> {
-  const session = await auth();
-  if (!session?.user) {
-    throw new UnauthorizedError();
+async function resolveStaffUser(clerkUserId: string): Promise<User> {
+  const bound = await prisma.user.findUnique({ where: { clerkUserId } });
+  if (bound) {
+    if (!bound.isActive) throw new ForbiddenError('This staff account has been deactivated.');
+    return bound;
   }
-  if (roles.length > 0 && !roles.includes(session.user.role)) {
+
+  const clerkUser = await currentUser();
+  const primary = clerkUser?.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId);
+  if (!primary || primary.verification?.status !== 'verified') {
     throw new ForbiddenError();
   }
+
+  // updateMany, not update: the `clerkUserId: null` guard has to be part of
+  // the WHERE so two concurrent first-sign-ins can't both bind the same row.
+  const email = primary.emailAddress.toLowerCase();
+  const claimed = await prisma.user.updateMany({
+    where: { invitedEmail: email, clerkUserId: null, isActive: true },
+    data: { clerkUserId, lastLoginAt: new Date() },
+  });
+  if (claimed.count !== 1) throw new ForbiddenError();
+
+  return prisma.user.findUniqueOrThrow({ where: { clerkUserId } });
+}
+
+/** OWNER > MANAGER > BOOKIE, resolved for one specific venue. */
+async function resolveEffectiveRole(user: User, venueId: string): Promise<{ role: StaffRole; tenantId: string }> {
+  const venue = await prisma.venue.findUnique({
+    where: { id: venueId },
+    select: { id: true, tenantId: true, isActive: true, tenant: { select: { ownerClerkUserId: true } } },
+  });
+  if (!venue || !venue.isActive) throw new ForbiddenError('That venue is not available.');
+
+  // Platform admin: full access to every venue, for support. Any action
+  // taken this way still writes an AuditLog row under this user's id, so
+  // the impersonation is visible after the fact.
+  if (user.clerkUserId) {
+    const platformAdmin = await prisma.platformAdmin.findUnique({ where: { clerkUserId: user.clerkUserId } });
+    if (platformAdmin) return { role: 'OWNER', tenantId: venue.tenantId };
+    if (venue.tenant.ownerClerkUserId === user.clerkUserId) {
+      return { role: 'OWNER', tenantId: venue.tenantId };
+    }
+  }
+
+  const grant = await prisma.venueStaff.findUnique({
+    where: { venueId_userId: { venueId, userId: user.id } },
+    select: { role: true, isActive: true },
+  });
+  if (!grant || !grant.isActive) throw new ForbiddenError();
+
+  const role: Record<VenueStaffRole, StaffRole> = { MANAGER: 'MANAGER', BOOKIE: 'BOOKIE' };
+  return { role: role[grant.role], tenantId: venue.tenantId };
+}
+
+export async function requireRole(...roles: StaffRole[]): Promise<StaffUser> {
+  const { userId: clerkUserId } = await auth();
+  if (!clerkUserId) throw new UnauthorizedError();
+
+  const user = await resolveStaffUser(clerkUserId);
+  // Stage 2 resolves to the single existing venue. Stage 3 replaces this
+  // with lib/auth/active-venue.ts, which picks the venue from the request
+  // (explicit param > cookie > the user's only venue) and validates the
+  // caller actually holds a grant on it.
+  const venueId = await getDefaultVenueId();
+  const { role, tenantId } = await resolveEffectiveRole(user, venueId);
+
+  if (roles.length > 0 && !roles.includes(role)) {
+    throw new ForbiddenError();
+  }
+
   return {
-    id: session.user.id,
-    email: session.user.email ?? '',
-    name: session.user.name ?? '',
-    role: session.user.role,
+    id: user.id,
+    clerkUserId,
+    email: user.email,
+    name: user.name,
+    role,
+    venueId,
+    tenantId,
   };
 }

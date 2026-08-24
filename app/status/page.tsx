@@ -5,7 +5,7 @@
  * database. Deliberately breaks CLAUDE.md §8's "a raw error message
  * never reaches the client" rule — that's exactly the information
  * needed to diagnose a broken deploy from outside Vercel's own log
- * viewer. Never shows actual secret VALUES (AUTH_SECRET, the password
+ * viewer. Never shows actual secret VALUES (CLERK_SECRET_KEY, the password
  * inside DATABASE_URL) — only whether each is set, and for DATABASE_URL,
  * the host/database it points at (safe, and the actual useful bit for
  * "is this even pointing at the right database").
@@ -41,12 +41,17 @@ function checkEnv(name: string): EnvCheck {
   const present = !!value && value.length > 0;
   if (!present) return { name, present: false, detail: 'not set' };
   if (name === 'DATABASE_URL') return { name, present: true, detail: redactedDbTarget(value!) };
-  if (name === 'AUTH_SECRET') return { name, present: true, detail: `set (${value!.length} characters)` };
+  if (name === 'CLERK_SECRET_KEY') return { name, present: true, detail: `set (${value!.length} characters)` };
   return { name, present: true, detail: value! };
 }
 
 export default async function StatusPage() {
-  const envChecks = ['DATABASE_URL', 'AUTH_SECRET', 'AUTH_URL', 'NODE_ENV'].map(checkEnv);
+  const envChecks = [
+    'DATABASE_URL',
+    'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY',
+    'CLERK_SECRET_KEY',
+    'NODE_ENV',
+  ].map(checkEnv);
 
   let dbCheck: { ok: true } | { ok: false; name: string; message: string };
   try {

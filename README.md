@@ -430,7 +430,7 @@ included; a native Postgres install works just as well — that's what this repo
 actually developed against).
 
 ```bash
-cp .env.example .env        # fill in DATABASE_URL, AUTH_SECRET (openssl rand -base64 32), etc.
+cp .env.example .env        # fill in DATABASE_URL and your Clerk keys
 docker compose up -d        # or point DATABASE_URL at your own Postgres
 pnpm install
 pnpm prisma migrate deploy  # applies the partial-index migration as-is — do not regenerate it
@@ -462,8 +462,8 @@ All of them, no secrets in code:
 
 ```
 DATABASE_URL                 Postgres connection string
-AUTH_SECRET                  Auth.js session signing key — generate with `openssl rand -base64 32`
-AUTH_URL                     e.g. http://localhost:3000 in dev
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY   Clerk publishable key (pk_test_… / pk_live_…)
+CLERK_SECRET_KEY             Clerk secret key (sk_test_… / sk_live_…)
 RESEND_API_KEY                Only read in production; dev uses ConsoleNotifier regardless
 SMS_API_KEY                   Reserved — no SMS provider is wired up (email-only Notifier today)
 NOTIFICATIONS_ENABLED         'false' -> NoopNotifier (safe default for local dev)

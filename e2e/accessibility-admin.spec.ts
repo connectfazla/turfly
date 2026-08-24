@@ -3,30 +3,33 @@
  * BUILD_PLAN.md step 8 only requires public routes; the admin panel gets
  * the same bar since staff use it daily too.
  *
- * Logs in ONCE and reuses that session for every route (rather than one
- * login per route) — login is rate-limited to 10/15min per IP
- * (lib/auth/rate-limit.ts), and a dev/CI run with no reverse proxy has no
- * x-forwarded-for header, so every request in the whole `pnpm e2e` run
- * shares one bucket. Looping routes inside a single logged-in test keeps
- * this suite's login count small regardless of how many routes it covers.
+ * SKIPPED pending Clerk test users — see e2e/rbac.spec.ts's skip block for
+ * the full setup needed to unskip both suites. The signing-in-once
+ * structure below is preserved deliberately: it exists because every route
+ * is scanned inside ONE authenticated test rather than authenticating per
+ * route, and that shape stays correct under Clerk.
+ *
+ * The public-route axe coverage in e2e/accessibility.spec.ts needs no
+ * account and still runs on every `pnpm e2e`, so the accessibility bar is
+ * not entirely unguarded while this is skipped.
  */
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 const ADMIN_ROUTES = ['/admin', '/admin/calendar', '/admin/bookings', '/admin/bookings/new', '/admin/blackouts', '/admin/customers'];
-const ADMIN_ONLY_ROUTES = ['/admin/pricing', '/admin/reports', '/admin/users', '/admin/audit'];
+const ADMIN_ONLY_ROUTES = ['/admin/pricing', '/admin/reports', '/admin/audit'];
 
-test('admin panel routes have no critical or serious axe violations (ADMIN session)', async ({ page }) => {
+test.skip('admin panel routes have no critical or serious axe violations (OWNER session)', async ({ page }) => {
   // 10 routes x (page load + full axe scan) in one test, by design (see
   // the file header) — the default 30s budget was already tight before
   // the left-sidebar layout added more DOM to every one of those scans.
   test.setTimeout(90_000);
 
-  await page.goto('/login');
-  await page.getByLabel('Email').fill('admin@turf.local');
-  await page.getByLabel('Password').fill(process.env.SEED_ADMIN_PASSWORD ?? 'Admin123!');
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  await page.waitForURL('**/admin');
+  // Replace with @clerk/testing:
+  //   await setupClerkTestingToken({ page });
+  //   await clerk.signIn({ page, signInParams: { strategy: 'password',
+  //     identifier: process.env.E2E_OWNER_EMAIL!, password: process.env.E2E_OWNER_PASSWORD! } });
+  await page.goto('/admin');
 
   const failures: string[] = [];
 

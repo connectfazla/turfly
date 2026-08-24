@@ -80,7 +80,7 @@ export async function createCounterBookingAction(
   input: CounterBookingFormInput,
 ): Promise<ActionResult<{ reference: string }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole();
     const parsed = counterBookingSchema.parse(input);
     const booking = await createBooking({
       date: badDate(parsed.date),
@@ -116,7 +116,7 @@ export async function createCounterBookingAction(
 /** One-tap check-in from the DayTimeline row or the booking detail page. */
 export async function checkInBookingAction(input: { bookingId: string }): Promise<ActionResult<{ status: string }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole();
     const parsed = checkInSchema.parse(input);
     const booking = await checkInBooking({ bookingId: parsed.bookingId, staffUserId: staff.id });
     revalidatePath('/admin');
@@ -131,7 +131,7 @@ export async function checkInBookingAction(input: { bookingId: string }): Promis
  * lib/booking-engine.ts for that guard. */
 export async function markNoShowAction(input: { bookingId: string }): Promise<ActionResult<{ status: string }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole();
     const parsed = markNoShowSchema.parse(input);
     const booking = await markNoShow({ bookingId: parsed.bookingId, staffUserId: staff.id });
     revalidatePath('/admin');
@@ -150,7 +150,7 @@ export async function cancelBookingStaffAction(input: {
   reason?: string;
 }): Promise<ActionResult<{ status: string }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole();
     const parsed = cancelStaffSchema.parse(input);
     const booking = await cancelBooking({
       bookingId: parsed.bookingId,
@@ -177,7 +177,7 @@ export async function rescheduleBookingStaffAction(input: {
   newSlotIndex: number;
 }): Promise<ActionResult<{ reference: string }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole();
     const parsed = rescheduleStaffSchema.parse(input);
 
     const previous = await prisma.booking.findUnique({
@@ -205,7 +205,7 @@ export async function rescheduleBookingStaffAction(input: {
  * balance, refund) so this never overwrites, only adds. */
 export async function recordPaymentAction(input: RecordPaymentFormInput): Promise<ActionResult<{ paymentStatus: string }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole('OWNER', 'MANAGER');
     const parsed = recordPaymentSchema.parse(input);
     const booking = await recordPayment({
       bookingId: parsed.bookingId,
@@ -228,7 +228,7 @@ export async function recordPaymentAction(input: RecordPaymentFormInput): Promis
  * notifyBookingConfirmed fires HERE, not at submission time. */
 export async function verifyPaymentAction(input: { bookingId: string }): Promise<ActionResult<{ status: string }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole('OWNER', 'MANAGER');
     const parsed = verifyPaymentSchema.parse(input);
     const booking = await verifyPaymentClaim({ bookingId: parsed.bookingId, staffUserId: staff.id });
     void notifyBookingConfirmed(booking.id);
@@ -246,7 +246,7 @@ export async function verifyPaymentAction(input: { bookingId: string }): Promise
  * immediately instead of waiting for the auto-expiry deadline. */
 export async function rejectPaymentAction(input: RejectPaymentFormInput): Promise<ActionResult<{ status: string }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole('OWNER', 'MANAGER');
     const parsed = rejectPaymentSchema.parse(input);
     const booking = await rejectPaymentClaim({
       bookingId: parsed.bookingId,
@@ -269,7 +269,7 @@ export async function updateBookingNoteAction(input: {
   internalNote: string;
 }): Promise<ActionResult<{ ok: true }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole();
     const parsed = updateNoteSchema.parse(input);
     const booking = await updateBookingNote({
       bookingId: parsed.bookingId,

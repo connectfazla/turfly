@@ -131,25 +131,13 @@ export const paymentSettingsSchema = z.object({
 });
 export type PaymentSettingsFormInput = z.input<typeof paymentSettingsSchema>;
 
-// ---------------------------------------------------------------- users
-
-export const createUserSchema = z.object({
-  email: z.string().trim().toLowerCase().email('Enter a valid email'),
-  name: fullNameSchema,
-  password: z.string().min(8, 'Password must be at least 8 characters'),
-  role: z.enum(['ADMIN', 'MODERATOR']),
-});
-export type CreateUserFormInput = z.input<typeof createUserSchema>;
-
-export const setUserActiveSchema = z.object({
-  userId: idSchema,
-  isActive: z.boolean(),
-});
-
-export const changeUserRoleSchema = z.object({
-  userId: idSchema,
-  role: z.enum(['ADMIN', 'MODERATOR']),
-});
+// ---------------------------------------------------------------- staff
+//
+// The password-based create/enable/change-role schemas that lived here died
+// with Auth.js: staff no longer have a password for us to validate, and a
+// role is now MANAGER/BOOKIE scoped to one venue rather than the global
+// ADMIN/MODERATOR pair. Their venue-scoped, invitation-based replacements
+// arrive with app/actions/venue-staff.ts.
 
 // ---------------------------------------------------------------- customers
 

@@ -10,7 +10,6 @@ import {
   Users,
   Tag,
   BarChart3,
-  UserCog,
   History,
   type LucideIcon,
 } from 'lucide-react';
@@ -31,13 +30,15 @@ const STAFF_LINKS: NavLink[] = [
   { href: '/admin/customers', label: 'Customers', icon: Users },
 ];
 
-/** The four ADMIN-only routes (CLAUDE.md §7) - the layout only renders
- * these when isAdmin is true, but the route itself is the real guard
- * (middleware.ts + each action's requireRole('ADMIN')), not this list. */
+/** The Owner-only routes - the layout only renders these when the signed-in
+ * staff member is an Owner, but that is cosmetic: each page's own
+ * `await requireRole('OWNER')` is the real guard (CLAUDE.md §7).
+ *
+ * Staff management used to live here as /admin/users. It was password-based
+ * and died with Auth.js; it returns as venue-scoped Clerk invitations. */
 const ADMIN_LINKS: NavLink[] = [
   { href: '/admin/pricing', label: 'Pricing', icon: Tag },
   { href: '/admin/reports', label: 'Reports', icon: BarChart3 },
-  { href: '/admin/users', label: 'Users', icon: UserCog },
   { href: '/admin/audit', label: 'Audit', icon: History },
 ];
 

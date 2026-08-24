@@ -13,6 +13,7 @@ import { ReportsFilterForm } from '@/components/admin/reports-filter-form';
 import { StatCard } from '@/components/admin/stat-card';
 import { RevenueChart } from '@/components/admin/revenue-chart';
 import { UtilizationHeatmap } from '@/components/admin/utilization-heatmap';
+import { requireRole } from '@/lib/auth/require-role';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,9 @@ function percentDelta(current: number, prior: number): { text: string; positive:
 }
 
 export default async function AdminReportsPage({ searchParams }: Props) {
+  // OWNER-only route. This is the real gate: middleware only proves
+  // somebody is signed in, and the sidebar hiding the link is cosmetic.
+  await requireRole('OWNER');
   const params = await searchParams;
   const now = new Date();
   const from = (params.from ? parseDateParam(params.from) : null) ?? startOfMonth(now);

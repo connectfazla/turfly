@@ -1,33 +1,13 @@
 /**
- * ROUTE: /login — public (staff sign-in; not for Customers, who never
- * authenticate at all - CLAUDE.md §5).
+ * ROUTE: /login — a permanent redirect to Clerk's sign-in page.
  *
- * middleware.ts sends unauthenticated visitors to /admin/* here, with
- * ?callbackUrl= set to where they were headed. Already-signed-in staff
- * are bounced straight to /admin.
+ * Staff authentication moved from Auth.js to Clerk. This stub exists only
+ * so existing bookmarks, the browser history of everyone who has ever run
+ * the counter, and any printed/pinned instructions keep working. It carries
+ * no UI of its own and can be deleted once those have aged out.
  */
-import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
-import { auth } from '@/auth';
-import { LoginForm } from '@/components/auth/login-form';
-import { getVenueName } from '@/lib/venue';
 
-export default async function LoginPage() {
-  const session = await auth();
-  if (session?.user) redirect('/admin');
-  const venueName = await getVenueName();
-
-  return (
-    <div className="flex min-h-dvh items-center justify-center bg-surface px-4">
-      <div className="w-full max-w-sm">
-        <h1 className="text-heading text-text">Staff sign in</h1>
-        <p className="mt-1 text-body text-text-muted">{venueName} admin panel</p>
-        <div className="mt-6">
-          <Suspense>
-            <LoginForm />
-          </Suspense>
-        </div>
-      </div>
-    </div>
-  );
+export default function LoginPage() {
+  redirect('/sign-in');
 }

@@ -48,7 +48,7 @@ function fail(error: unknown): ActionResult<never> {
  * split by weekday/weekend × afternoon/night. */
 export async function updatePricingAction(input: PricingFormInput): Promise<ActionResult<{ ok: true }>> {
   try {
-    const staff = await requireRole('ADMIN');
+    const staff = await requireRole('OWNER');
     const parsed = pricingSchema.parse(input);
 
     await prisma.$transaction(async (tx) => {
@@ -101,7 +101,7 @@ export async function updatePaymentSettingsAction(
   input: PaymentSettingsFormInput,
 ): Promise<ActionResult<{ ok: true }>> {
   try {
-    const staff = await requireRole('ADMIN');
+    const staff = await requireRole('OWNER');
     const parsed = paymentSettingsSchema.parse(input);
     const venueId = await getDefaultVenueId();
 

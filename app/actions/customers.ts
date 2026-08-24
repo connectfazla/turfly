@@ -30,7 +30,7 @@ export async function blockCustomerAction(input: {
   reason: string;
 }): Promise<ActionResult<{ isBlocked: boolean }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole('OWNER', 'MANAGER');
     const parsed = blockCustomerSchema.parse(input);
 
     const customer = await prisma.$transaction(async (tx) => {
@@ -62,7 +62,7 @@ export async function blockCustomerAction(input: {
 /** Reverses blockCustomerAction. */
 export async function unblockCustomerAction(input: { customerId: string }): Promise<ActionResult<{ isBlocked: boolean }>> {
   try {
-    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const staff = await requireRole('OWNER', 'MANAGER');
     const parsed = unblockCustomerSchema.parse(input);
 
     const customer = await prisma.$transaction(async (tx) => {
