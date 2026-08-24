@@ -8,7 +8,14 @@ import { z } from 'zod';
 
 const DATE_PARAM_RE = /^\d{4}-\d{2}-\d{2}$/;
 const BD_PHONE_RE = /^(?:\+?880|0)1[3-9]\d{8}$/;
-const REFERENCE_RE = /^TRF-\d{4}-\d{4}$/;
+/** Accepts BOTH reference shapes:
+ *   TRF-2026-0001          legacy, pre-multi-tenant
+ *   TRF-TFLY-2026-0001     current, venue-scoped
+ * The legacy form must keep matching forever — Venue Zero's existing
+ * bookings carry it, and a customer looking one up years later should not
+ * be told their own reference is invalid. Narrowing this to the new form
+ * only would break /booking/lookup for every booking made before today. */
+const REFERENCE_RE = /^TRF-(?:[A-Z0-9]{2,8}-)?\d{4}-\d{4}$/;
 /** bKash TRXN IDs are 10 uppercase-alphanumeric characters in practice
  * (e.g. "8N7A1B2C3D"), but bKash doesn't publish a formal spec and the
  * format has drifted before — validated loosely (6-20 chars) rather than
@@ -91,7 +98,7 @@ export const lookupBookingSchema = z.object({
     .string()
     .trim()
     .toUpperCase()
-    .regex(REFERENCE_RE, 'Enter a valid booking reference, e.g. TRF-2026-0001'),
+    .regex(REFERENCE_RE, 'Enter a valid booking reference, e.g. TRF-TFLY-2026-0001'),
   phone: phoneSchema,
 });
 export type LookupBookingFormInput = z.input<typeof lookupBookingSchema>;
@@ -101,7 +108,7 @@ export const publicCancelBookingSchema = z.object({
     .string()
     .trim()
     .toUpperCase()
-    .regex(REFERENCE_RE, 'Enter a valid booking reference, e.g. TRF-2026-0001'),
+    .regex(REFERENCE_RE, 'Enter a valid booking reference, e.g. TRF-TFLY-2026-0001'),
   phone: phoneSchema,
   reason: optionalText(300),
 });

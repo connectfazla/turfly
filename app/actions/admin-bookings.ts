@@ -107,6 +107,10 @@ export async function createCounterBookingAction(
     const staff = await requireRole();
     const parsed = counterBookingSchema.parse(input);
     const booking = await createBooking({
+      // The staff member's own venue — a counter booking belongs where the
+      // person taking it works, and staff.venueId is already validated
+      // against their real grants by requireRole().
+      venueId: staff.venueId,
       date: badDate(parsed.date),
       slotIndex: parsed.slotIndex,
       phone: parsed.phone,

@@ -5,15 +5,31 @@
  *
  * This test talks to the real local Postgres via the real Prisma client and
  * calls the real transactional createBooking() — no mocks, no stubs. The
- * guarantee under test is the partial unique index from CLAUDE.md §2:
- *   CREATE UNIQUE INDEX one_live_booking_per_slot ON "Booking" (date, "slotIndex")
- *   WHERE status IN ('HELD','CONFIRMED','COMPLETED');
+ * guarantee under test is the partial unique index from CLAUDE.md §2, now
+ * venue-scoped:
+ *   CREATE UNIQUE INDEX one_live_booking_per_slot
+ *     ON "Booking" ("venueId", date, "slotIndex")
+ *     WHERE status IN ('HELD','CONFIRMED','COMPLETED','PENDING_VERIFICATION');
+ *
+ * Two properties, and BOTH matter — they pull in opposite directions, which
+ * is the whole point of testing them together:
+ *   1. within one venue, exactly one of N racing bookings wins;
+ *   2. across two venues, the same (date, slotIndex) is bookable twice.
+ * A too-narrow index breaks (1) and double-books. A too-wide one breaks (2)
+ * and lets one turf's booking block an unrelated business's.
  *
  * Run this live in the demo — see BUILD_PLAN.md's "Demo script" section.
  */
 import { expect, test } from '@playwright/test';
 import { createBooking, SlotTakenError } from '../lib/booking-engine';
 import { prisma } from '../lib/prisma';
+
+/** Venue Zero. Resolved once in beforeAll rather than imported, so this
+ * suite exercises the same rows the app does. */
+let venueId: string;
+/** The isolation fixture from scripts/create-test-venue.ts, when present.
+ * The cross-venue test skips itself if it hasn't been created. */
+let otherVenueId: string | null = null;
 
 const CONCURRENCY = 20;
 const TEST_SLOT_INDEX = 10; // an ordinary bookable slot, nowhere near maintenance (4)
@@ -33,6 +49,8 @@ function testDate(): Date {
 }
 
 async function cleanUp(date: Date) {
+  // Not venue-scoped on purpose: this is fixture teardown, and it must clear
+  // the slot at BOTH venues for the cross-venue test to start from clean.
   await prisma.booking.deleteMany({ where: { date, slotIndex: TEST_SLOT_INDEX } });
   await prisma.customer.deleteMany({ where: { phone: { startsWith: PHONE_PREFIX } } });
 }
@@ -41,6 +59,13 @@ test.describe('booking engine concurrency — the correctness core', () => {
   const date = testDate();
 
   test.beforeAll(async () => {
+    const [zero, other] = await Promise.all([
+      prisma.venue.findUnique({ where: { slug: 'default' }, select: { id: true } }),
+      prisma.venue.findUnique({ where: { slug: 'test-venue' }, select: { id: true } }),
+    ]);
+    if (!zero) throw new Error('Venue Zero missing — run scripts/backfill-tenant-zero.ts');
+    venueId = zero.id;
+    otherVenueId = other?.id ?? null;
     await cleanUp(date);
   });
 
@@ -54,6 +79,7 @@ test.describe('booking engine concurrency — the correctness core', () => {
 
     const attempts = Array.from({ length: CONCURRENCY }, (_, i) =>
       createBooking({
+        venueId,
         date,
         slotIndex: TEST_SLOT_INDEX,
         phone: `${PHONE_PREFIX}${String(i).padStart(3, '0')}`,
@@ -89,5 +115,60 @@ test.describe('booking engine concurrency — the correctness core', () => {
     });
     expect(liveRows).toHaveLength(1);
     expect(liveRows[0]!.status).toBe('CONFIRMED');
+  });
+
+  test('two venues can independently book the SAME (date, slotIndex)', async () => {
+    test.skip(otherVenueId === null, 'needs scripts/create-test-venue.ts');
+    const now = new Date();
+    await cleanUp(date);
+
+    // Same day, same slot, different venues. Both must succeed: these are
+    // two unrelated businesses whose pitches have nothing to do with each
+    // other. Before the index was venue-scoped, the second call here failed
+    // with SlotTakenError — one turf's booking blocked another's.
+    const first = await createBooking({
+      venueId,
+      date,
+      slotIndex: TEST_SLOT_INDEX,
+      phone: `${PHONE_PREFIX}900`,
+      fullName: 'Venue Zero Customer',
+      now,
+    });
+    const second = await createBooking({
+      venueId: otherVenueId!,
+      date,
+      slotIndex: TEST_SLOT_INDEX,
+      phone: `${PHONE_PREFIX}901`,
+      fullName: 'Test Venue Customer',
+      now,
+    });
+
+    expect(first.venueId).toBe(venueId);
+    expect(second.venueId).toBe(otherVenueId);
+
+    // References must be distinguishable per venue, not a shared sequence.
+    expect(first.reference).not.toBe(second.reference);
+    expect(first.reference).toMatch(/^TRF-[A-Z0-9]{2,8}-\d{4}-\d{4}$/);
+    expect(second.reference).toMatch(/^TRF-[A-Z0-9]{2,8}-\d{4}-\d{4}$/);
+
+    // ...and the slot really is doubly occupied, one row per venue.
+    const live = await prisma.booking.findMany({
+      where: { date, slotIndex: TEST_SLOT_INDEX, status: { in: ['HELD', 'CONFIRMED', 'COMPLETED'] } },
+      select: { venueId: true },
+    });
+    expect(live).toHaveLength(2);
+    expect(new Set(live.map((b) => b.venueId)).size).toBe(2);
+
+    // But WITHIN one venue the guarantee still holds.
+    await expect(
+      createBooking({
+        venueId,
+        date,
+        slotIndex: TEST_SLOT_INDEX,
+        phone: `${PHONE_PREFIX}902`,
+        fullName: 'Should Be Refused',
+        now,
+      }),
+    ).rejects.toBeInstanceOf(SlotTakenError);
   });
 });

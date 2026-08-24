@@ -61,10 +61,11 @@ export function parseDateParam(param: string): Date | null {
   return date;
 }
 
-/** "TRF-2026-0184" -> true. Used to validate the lookup form before hitting
+/** "TRF-TFLY-2026-0184" -> true; the legacy "TRF-2026-0184" too. Used to
+ * validate the lookup form before hitting
  * the database. */
 export function isValidReferenceFormat(reference: string): boolean {
-  return /^TRF-\d{4}-\d{4}$/.test(reference);
+  return /^TRF-(?:[A-Z0-9]{2,8}-)?\d{4}-\d{4}$/.test(reference);
 }
 
 /** Plain-language status for customer-facing screens (e.g.

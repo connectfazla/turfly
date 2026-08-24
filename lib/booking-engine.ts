@@ -15,6 +15,7 @@
  * side effect outside the booking transaction." Callers (Server Actions)
  * send them after a successful call returns.
  */
+import { randomUUID } from 'node:crypto';
 import { Prisma, type Booking, type BookingSource, type PaymentMethod } from '@prisma/client';
 import { prisma } from './prisma';
 import { dateOnly, fetchDayAvailability } from './availability-service';
@@ -87,14 +88,36 @@ export class NotAuthorizedError extends BookingEngineError {
   }
 }
 
+/** The booking could not be completed because the database was too busy —
+ * retries exhausted, transaction timed out. Deliberately NOT SlotTakenError:
+ * we do not know that anyone else got the slot, and telling a customer
+ * "someone just booked it" when the truth is "we were overloaded" is a lie
+ * they would act on by giving up. This says try again, because trying again
+ * genuinely may work. */
+export class BookingBusyError extends BookingEngineError {
+  constructor(message = 'We could not complete that just now. Please try again.') {
+    super(message, 'BOOKING_BUSY');
+  }
+}
+
 // ---------------------------------------------------------------- config
 
-const HOLD_MINUTES = Number(process.env.HOLD_MINUTES ?? 10);
-const CANCELLATION_WINDOW_HOURS = Number(process.env.CANCELLATION_WINDOW_HOURS ?? 6);
+/** Fallbacks only. The real values live on the Venue row (Venue.holdMinutes,
+ * Venue.cancellationWindowHours) — these apply solely when a booking has no
+ * venue attached, which after Migration B part 2 cannot happen. /rules has
+ * always rendered the Venue values, so reading env here meant the page and
+ * the engine could quietly disagree about how long a hold lasts. */
+const DEFAULT_HOLD_MINUTES = Number(process.env.HOLD_MINUTES ?? 10);
+const DEFAULT_CANCELLATION_WINDOW_HOURS = Number(process.env.CANCELLATION_WINDOW_HOURS ?? 6);
 
 /** Prisma error codes we special-case. See CLAUDE.md §10. */
 const PRISMA_UNIQUE_VIOLATION = 'P2002';
 const PRISMA_WRITE_CONFLICT = 'P2034'; // serialization failure or deadlock, under Serializable isolation
+/** "Transaction not found" — the interactive transaction was already closed
+ * when a query ran, i.e. it exceeded its timeout. Under heavy contention
+ * this is what a transaction that spent too long queuing on a row lock
+ * surfaces as. See CLAUDE.md §10's Neon note. */
+const PRISMA_TRANSACTION_CLOSED = 'P2028';
 /** The hand-written partial unique index — see prisma/schema.prisma's
  * bottom-of-file note. Named here so isSlotCollision() can tell a real slot
  * race apart from any other unique violation on Booking. */
@@ -183,6 +206,14 @@ async function runSerializable<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
         // Retried once and still conflicting — from the caller's point of
         // view this means the same thing: someone else won the slot.
         throw new SlotTakenError();
+      }
+      // A timed-out transaction is NOT evidence the slot was taken. Retry
+      // once, then surface an honest "we were busy" rather than either a
+      // raw Prisma error (which would reach the customer as an unhandled
+      // failure) or a false SlotTakenError.
+      if (isPrismaKnownError(err, PRISMA_TRANSACTION_CLOSED)) {
+        if (attempt === 0) continue;
+        throw new BookingBusyError();
       }
       throw err;
     }
@@ -275,14 +306,78 @@ async function upsertCustomer(
   });
 }
 
-/** Reference format TRF-YYYY-NNNN, sequential per calendar year, generated
- * inside the transaction (CLAUDE.md §8). Keyed by the year the booking was
- * MADE, not the year of the slot, so it behaves like an invoice sequence. */
-async function nextReference(tx: Tx, now: Date): Promise<string> {
+/** Reference format TRF-{venueCode}-YYYY-NNNN, sequential per venue per
+ * calendar year, generated inside the transaction (CLAUDE.md §8). Keyed by
+ * the year the booking was MADE, not the year of the slot, so it behaves
+ * like an invoice sequence.
+ *
+ * The sequence comes from VenueReferenceCounter, not from counting existing
+ * bookings. Counting was both incorrect (deleting a booking made the next
+ * count collide with a live reference, and reference is unique) and
+ * unbounded in cost (a full scan of the venue's year, on every booking, in
+ * a Serializable transaction). The upsert reserves the number atomically in
+ * the same transaction as the insert, so two concurrent bookings cannot be
+ * handed the same one; a rolled-back transaction burns a number, which is
+ * how invoice sequences behave anyway.
+ *
+ * Scoping by venue also NARROWS Serializable contention — each venue's
+ * bookings now conflict only with their own, instead of every venue on the
+ * platform serialising against one global count.
+ *
+ * CALL ORDER MATTERS. This must run AFTER the booking row is inserted, not
+ * before — see assignReference() below. Every concurrent attempt for a slot
+ * reaches this point, but only ONE of them survives the insert, so calling
+ * it first funnels all N transactions through a single row lock and they
+ * time out (P2028) instead of failing cleanly on the slot index. Measured:
+ * 20-way contention gave 1 success / 16 SlotTaken / 3 raw P2028 with the
+ * counter first, and 1 success / 19 SlotTaken with it last. */
+async function nextReference(tx: Tx, venueId: string, venueCode: string, now: Date): Promise<string> {
   const year = now.getFullYear();
-  const prefix = `TRF-${year}-`;
-  const count = await tx.booking.count({ where: { reference: { startsWith: prefix } } });
-  return `${prefix}${String(count + 1).padStart(4, '0')}`;
+  const counter = await tx.venueReferenceCounter.upsert({
+    where: { venueId_year: { venueId, year } },
+    // create sets next=2 because this call consumes number 1; update returns
+    // the already-incremented value. Either way the number just reserved is
+    // `next - 1`, so both paths read the same below.
+    create: { venueId, year, next: 2 },
+    update: { next: { increment: 1 } },
+    select: { next: true },
+  });
+  const sequence = counter.next - 1;
+  return `TRF-${venueCode}-${year}-${String(sequence).padStart(4, '0')}`;
+}
+
+/**
+ * A throwaway reference used for the few microseconds between inserting a
+ * booking row and giving it its real one. Booking.reference is NOT NULL and
+ * unique, so the insert needs *something*; a UUID guarantees it never
+ * collides. Both statements are in the same transaction, so no reader ever
+ * observes this value.
+ */
+function placeholderReference(): string {
+  return `TMP-${randomUUID()}`;
+}
+
+/**
+ * Inserts-then-names: gives `booking` its real reference and returns the
+ * updated row.
+ *
+ * The two-step exists to keep VenueReferenceCounter out of the contention
+ * path. The slot's partial unique index is what arbitrates who wins a
+ * contested slot, and it does so on INSERT; by the time we get here the
+ * winner is already decided and is the only transaction still running, so
+ * the counter is uncontended. Doing it the obvious way round — reserve a
+ * number, then insert — makes every loser take the counter's row lock first
+ * and turns a clean SlotTakenError into a transaction timeout.
+ */
+async function assignReference(
+  tx: Tx,
+  booking: Booking,
+  venueId: string,
+  venueCode: string,
+  now: Date,
+): Promise<Booking> {
+  const reference = await nextReference(tx, venueId, venueCode, now);
+  return tx.booking.update({ where: { id: booking.id }, data: { reference } });
 }
 
 /** CLAUDE.md §2 invariant 6: max 2 active future bookings per phone
@@ -332,6 +427,10 @@ async function writeAudit(
 // ---------------------------------------------------------------- holdSlot
 
 export interface HoldSlotInput {
+  /** REQUIRED. Which venue's slot is being held. Was resolved internally to
+   * getDefaultVenueId(), which meant every hold — including one placed on
+   * another venue's public page — landed on Venue Zero. */
+  venueId: string;
   date: Date;
   slotIndex: number;
   phone: string;
@@ -347,11 +446,7 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
   const now = input.now ?? new Date();
   const slotIndex = input.slotIndex as SlotIndex;
 
-  // Multi-tenant conversion, Phase 0: hardcoded to the one venue that
-  // exists today ("Venue Zero") — see lib/tenant.ts's doc comment. Not a
-  // real per-request venue resolution yet; that's a later pass, once
-  // callers of this function can supply a real venueId themselves.
-  const venueId = await getDefaultVenueId();
+  const { venueId } = input;
 
   return runSerializable(async (tx) => {
     await sweepExpiredHolds(tx, now);
@@ -360,16 +455,23 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
     const slot = slots.find((s) => s.index === slotIndex)!;
     assertSlotBookable(slot);
 
-    const customer = await upsertCustomer(tx, { phone: input.phone, fullName: input.fullName });
-    const reference = await nextReference(tx, now);
-    const holdExpiresAt = new Date(now.getTime() + HOLD_MINUTES * 60_000);
-    const price = ruleByIndex.get(slotIndex)!.price;
+    // Read once, up front: this venue's code goes into the reference and its
+    // holdMinutes decides how long the hold lasts. Both used to be global
+    // (a hardcoded TRF- prefix, an env var), which is why two venues could
+    // not have distinguishable references or different hold windows.
+    const venue = await tx.venue.findUniqueOrThrow({
+      where: { id: venueId },
+      select: { tenantId: true, code: true, holdMinutes: true },
+    });
 
-    const venue = await tx.venue.findUniqueOrThrow({ where: { id: venueId }, select: { tenantId: true } });
+    const customer = await upsertCustomer(tx, { phone: input.phone, fullName: input.fullName });
+    const holdExpiresAt = new Date(now.getTime() + (venue.holdMinutes ?? DEFAULT_HOLD_MINUTES) * 60_000);
+    const price = ruleByIndex.get(slotIndex)!.price;
 
     const booking = await tx.booking.create({
       data: {
-        reference,
+        // Renamed immediately below, once the slot race is decided.
+        reference: placeholderReference(),
         customerId: customer.id,
         date: day,
         slotIndex,
@@ -382,8 +484,12 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
       },
     });
 
-    await writeAudit(tx, { action: 'BOOKING_HELD', entityId: booking.id, after: booking });
-    return booking;
+    // Only the winner of the slot race reaches here, so the reference
+    // counter is uncontended — see assignReference().
+    const named = await assignReference(tx, booking, venueId, venue.code, now);
+
+    await writeAudit(tx, { action: 'BOOKING_HELD', entityId: named.id, after: named });
+    return named;
   });
 }
 
@@ -414,6 +520,8 @@ export interface ConfirmHeldBookingInput extends CreateBookingCommon {
 
 export interface CreateFreshBookingInput extends CreateBookingCommon {
   holdId?: undefined;
+  /** REQUIRED — which venue this booking belongs to. See HoldSlotInput. */
+  venueId: string;
   phone: string;
   fullName: string;
   /** Counter bookings (staff, source COUNTER) skip the 2-active-booking
@@ -520,7 +628,11 @@ async function confirmHeldBooking(
   // computed as a percentage of THIS booking's own price, same rounding
   // approach the SaaS architecture plan specifies for the later
   // Booking.depositAmount snapshot field.
-  const venueId = held.venueId ?? (await getDefaultVenueId());
+  // The held row's own venue. The `?? getDefaultVenueId()` that used to be
+  // here would have silently confirmed another venue's hold against Venue
+  // Zero's deposit percentage and bKash number.
+  const venueId = held.venueId;
+  if (!venueId) throw new InvalidTransitionError('This booking is not attached to a venue.');
   const venue = await tx.venue.findUnique({ where: { id: venueId } });
   const verificationHours = venue?.paymentVerificationHours ?? 24;
   const depositAmount = Math.round((Number(held.priceAmount) * (venue?.depositPercent ?? 30)) / 100);
@@ -563,9 +675,7 @@ async function createFreshConfirmedBooking(
   slotIndex: SlotIndex,
   source: BookingSource,
 ): Promise<Booking> {
-  // Multi-tenant conversion, Phase 0: hardcoded to the one venue that
-  // exists today — see lib/tenant.ts's doc comment.
-  const venueId = await getDefaultVenueId();
+  const { venueId } = input;
   const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now, undefined, venueId);
   const slot = slots.find((s) => s.index === slotIndex)!;
   assertSlotBookable(slot);
@@ -587,13 +697,16 @@ async function createFreshConfirmedBooking(
 
   await tx.customer.update({ where: { id: customer.id }, data: { totalBookings: { increment: 1 } } });
 
-  const reference = await nextReference(tx, now);
+  const venue = await tx.venue.findUniqueOrThrow({
+    where: { id: venueId },
+    select: { tenantId: true, code: true },
+  });
   const price = input.priceOverride ?? ruleByIndex.get(slotIndex)!.price;
-  const venue = await tx.venue.findUniqueOrThrow({ where: { id: venueId }, select: { tenantId: true } });
 
   const booking = await tx.booking.create({
     data: {
-      reference,
+      // Renamed immediately below, once the slot race is decided.
+      reference: placeholderReference(),
       customerId: customer.id,
       date: day,
       slotIndex,
@@ -607,8 +720,10 @@ async function createFreshConfirmedBooking(
     },
   });
 
-  await writeAudit(tx, { action: 'BOOKING_CREATED', entityId: booking.id, after: booking });
-  return booking;
+  const named = await assignReference(tx, booking, venueId, venue.code, now);
+
+  await writeAudit(tx, { action: 'BOOKING_CREATED', entityId: named.id, after: named });
+  return named;
 }
 
 // ---------------------------------------------------------------- cancelBooking
@@ -642,7 +757,14 @@ export async function cancelBooking(input: CancelBookingInput): Promise<Booking>
       }
       const start = slotStart(booking.date, booking.slotIndex as SlotIndex);
       const hoursUntilStart = (start.getTime() - now.getTime()) / 3_600_000;
-      if (hoursUntilStart < CANCELLATION_WINDOW_HOURS) {
+      const cancelVenue = booking.venueId
+        ? await tx.venue.findUnique({
+            where: { id: booking.venueId },
+            select: { cancellationWindowHours: true },
+          })
+        : null;
+      const windowHours = cancelVenue?.cancellationWindowHours ?? DEFAULT_CANCELLATION_WINDOW_HOURS;
+      if (hoursUntilStart < windowHours) {
         throw new CancellationWindowError();
       }
     }

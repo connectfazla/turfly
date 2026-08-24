@@ -32,6 +32,7 @@ import {
 } from '@/lib/schemas/booking';
 import { notifyBookingCancelled } from '@/lib/notify';
 import { clientIpFromHeaders, isRateLimited } from '@/lib/auth/rate-limit';
+import { getDefaultVenueId } from '@/lib/tenant';
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string };
 
@@ -82,12 +83,23 @@ export interface HoldSlotResult {
  * many-IP/many-phone-number abuse (see README §15). */
 export async function holdSlotAction(input: HoldSlotFormInput): Promise<ActionResult<HoldSlotResult>> {
   try {
+    // TRANSITIONAL: /book/* is still the bare-domain, single-venue public
+    // route, so "the venue" is Venue Zero. Stage 5 moves these pages under
+    // /v/[venueSlug] and resolves the venue from the request host instead —
+    // at which point this becomes the venue from the route, and the only
+    // thing that changes is this one line.
+    const venueId = await getDefaultVenueId();
+
     const ip = clientIpFromHeaders(await headers());
-    if (await isRateLimited(`hold:${ip}`)) {
+    // Rate-limit bucket is per venue as well as per IP. Sharing one bucket
+    // across venues meant one venue's abusive traffic locked out every other
+    // tenant reachable from the same IP or NAT.
+    if (await isRateLimited(`hold:${venueId}:${ip}`)) {
       return { ok: false, error: 'Too many attempts. Please wait a while and try again.', code: 'RATE_LIMITED' };
     }
     const parsed = holdSlotSchema.parse(input);
     const booking = await holdSlot({
+      venueId,
       date: badDate(parsed.date),
       slotIndex: parsed.slotIndex,
       phone: parsed.phone,

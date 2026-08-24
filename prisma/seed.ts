@@ -10,28 +10,18 @@
  *   OPERATOR_CLERK_USER_ID=user_xxx OPERATOR_EMAIL=you@example.com \
  *   pnpm exec tsx scripts/bind-operator-clerk-user.ts
  *
- * Does NOT create a Venue either (that was VenueSetting's job
- * pre-multi-tenant — see prisma/schema.prisma's bottom note). On a fresh
- * database run `tsx scripts/backfill-tenant-zero.ts` AFTER this script: it
- * creates "Venue Zero" and adopts the SlotRule rows seeded here.
+ * Creates "Venue Zero" (and its Tenant Zero) first, then its price grid —
+ * that ordering is forced by SlotRule.venueId being NOT NULL.
  */
 import { PrismaClient } from '@prisma/client';
-import { seedSlotRulesForVenue, SLOT_RULES_PER_VENUE } from '../lib/provisioning';
-import { DEFAULT_VENUE_SLUG } from '../lib/tenant';
+import { ensureDefaultVenue, seedSlotRulesForVenue, SLOT_RULES_PER_VENUE } from '../lib/provisioning';
 
 const prisma = new PrismaClient();
 
-async function seedSlotRules() {
-  // The grid itself now lives in lib/provisioning.ts so the owner-onboarding
-  // flow can seed a brand-new venue with the identical defaults. Attaches to
-  // Venue Zero when it already exists (a re-run), otherwise leaves venueId
-  // null for scripts/backfill-tenant-zero.ts to adopt — see that function's
-  // doc comment for why null is tolerated here.
-  const venueZero = await prisma.venue.findUnique({
-    where: { slug: DEFAULT_VENUE_SLUG },
-    select: { id: true },
-  });
-  const created = await seedSlotRulesForVenue(prisma, venueZero?.id ?? null);
+async function seedSlotRules(venueId: string) {
+  // The grid itself lives in lib/provisioning.ts so the owner-onboarding flow
+  // seeds a brand-new venue with the identical defaults.
+  const created = await seedSlotRulesForVenue(prisma, venueId);
   console.log(
     `  SlotRule: ${created} of ${SLOT_RULES_PER_VENUE} rows created (7 days x 16 slots)` +
       `${created === 0 ? ' — already seeded' : ''}`,
@@ -40,10 +30,14 @@ async function seedSlotRules() {
 
 async function main() {
   console.log('Seeding...');
-  await seedSlotRules();
+  // Venue first: SlotRule.venueId is NOT NULL as of Migration B, so there
+  // has to be a venue for the rules to belong to before they can exist.
+  const venueId = await ensureDefaultVenue(prisma);
+  console.log(`  Venue: ${venueId} (slug "default")`);
+  await seedSlotRules(venueId);
   console.log(
-    'Done. Next: `tsx scripts/backfill-tenant-zero.ts` to create the default Venue,\n' +
-      'then `tsx scripts/bind-operator-clerk-user.ts` to bind your Clerk account as owner.',
+    'Done. Next: `tsx scripts/bind-operator-clerk-user.ts` to bind your Clerk\n' +
+      'account as platform admin and owner of this venue.',
   );
 }
 

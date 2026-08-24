@@ -304,13 +304,11 @@ model Booking {
   id        String @id @default(cuid())
   reference String @unique // TRF-2026-0184
 
-  /// Nullable in THIS pass only — see the bottom-of-file note.
-  /// scripts/backfill-tenant-zero.ts sets it on every existing row; every
-  /// row created from here on also gets it (lib/booking-engine.ts still
-  /// writes without it for now, since the engine itself isn't venue-aware
-  /// yet — the backfill script fixes those rows up immediately after).
-  venueId  String?
-  venue    Venue?  @relation(fields: [venueId], references: [id])
+  /// NOT NULL as of Migration B: the engine now requires a venueId on every
+  /// create path, and the partial unique index below has it in the key, so a
+  /// null would silently escape the one-live-booking-per-slot guarantee.
+  venueId  String
+  venue    Venue   @relation(fields: [venueId], references: [id])
   /// Denormalized from venue.tenantId — lets Super Admin cross-tenant
   /// reports query Booking without joining through Venue.
   tenantId String?
@@ -354,9 +352,10 @@ model Booking {
 
   // NOTE: this @@unique is a PLACEHOLDER so Prisma knows the shape.
   // It must be REPLACED by the partial index in the migration — see bottom of file.
-  // MULTI-TENANT: still keyed on (date, slotIndex) only, NOT (venueId, date,
-  // slotIndex), in this pass — see the bottom-of-file note for why.
-  @@unique([date, slotIndex], name: "one_live_booking_per_slot")
+  // Venue-scoped as of Migration B: two venues can hold the same
+  // (date, slotIndex) independently, while within one venue exactly one
+  // live booking may exist.
+  @@unique([venueId, date, slotIndex], name: "one_live_booking_per_slot")
   @@index([date, status])
   @@index([customerId])
   @@index([status, holdExpiresAt])
@@ -371,9 +370,9 @@ model Booking {
 /// maintenance window is data rather than a hard-coded condition.
 model SlotRule {
   id         String  @id @default(cuid())
-  /// Nullable in this pass — see Booking.venueId's doc comment above.
-  venueId    String?
-  venue      Venue?  @relation(fields: [venueId], references: [id])
+  /// NOT NULL as of Migration B — see Booking.venueId.
+  venueId    String
+  venue      Venue   @relation(fields: [venueId], references: [id])
   dayOfWeek  Int // 0 = Sunday … 6 = Saturday
   slotIndex  Int // 0..15
   isBookable Boolean @default(true)
@@ -393,9 +392,9 @@ model SlotRule {
 /// A null slotIndex closes the entire day.
 model Blackout {
   id          String   @id @default(cuid())
-  /// Nullable in this pass — see Booking.venueId's doc comment above.
-  venueId     String?
-  venue       Venue?   @relation(fields: [venueId], references: [id])
+  /// NOT NULL as of Migration B — see Booking.venueId.
+  venueId     String
+  venue       Venue    @relation(fields: [venueId], references: [id])
   date        DateTime @db.Date
   slotIndex   Int?
   reason      String
@@ -429,10 +428,11 @@ model Payment {
   bookingId    String
   booking      Booking       @relation(fields: [bookingId], references: [id])
   /// Denormalized from booking.venueId — the revenue-report read path
-  /// filters heavily by venue+date and this avoids a join. Nullable in
-  /// this pass, same as Booking.venueId.
-  venueId      String?
-  venue        Venue?        @relation(fields: [venueId], references: [id])
+  /// filters heavily by venue+date and this avoids a join. NOT NULL as of
+  /// Migration B, same as Booking.venueId: a payment with no venue would be
+  /// invisible to every revenue report.
+  venueId      String
+  venue        Venue         @relation(fields: [venueId], references: [id])
   amount       Decimal       @db.Decimal(10, 2)
   method       PaymentMethod @default(CASH)
   /// Null only while status = PENDING — a customer's self-reported claim
@@ -459,6 +459,33 @@ model Payment {
   @@index([receivedAt])
   @@index([status])
   @@index([venueId])
+}
+
+/// Hands out the sequential half of a booking reference
+/// (TRF-{venueCode}-YYYY-NNNN), one row per venue per calendar year.
+///
+/// Replaces a `booking.count({ where: { reference: { startsWith } } })`,
+/// which was wrong in two ways. Correctness: deleting any booking made the
+/// next count collide with an existing reference, and Booking.reference is
+/// unique — so the insert failed. Cost: it scanned every one of that
+/// venue's bookings for the year on EVERY booking creation, inside a
+/// Serializable transaction, growing without bound.
+///
+/// Incremented with `update: { next: { increment: 1 } }` inside the same
+/// transaction as the booking insert, so the number is reserved atomically
+/// and two concurrent bookings can never be handed the same one. Gaps are
+/// expected and fine — a rolled-back transaction burns a number, exactly
+/// like a real invoice sequence.
+///
+/// Keyed by the year the booking was MADE, not the year of the slot.
+model VenueReferenceCounter {
+  venueId String
+  year    Int
+  /// The NEXT number to hand out. Read-then-increment returns this value
+  /// already incremented, so the number actually used is `next - 1`.
+  next    Int    @default(1)
+
+  @@id([venueId, year])
 }
 
 // ---------------------------------------------------------------- audit

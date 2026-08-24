@@ -55,7 +55,7 @@ export function LookupForm() {
           <Label htmlFor="reference">Booking reference</Label>
           <Input
             id="reference"
-            placeholder="TRF-2026-0001"
+            placeholder="TRF-TFLY-2026-0001"
             className="rounded-(--radius-input) uppercase"
             {...form.register('reference')}
           />
