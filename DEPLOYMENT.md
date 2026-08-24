@@ -38,10 +38,11 @@ and before every deploy that changes `prisma/schema.prisma`:
 DATABASE_URL="<neon-pooled-url>" pnpm prisma migrate deploy
 ```
 
-`migrate deploy` applies migrations as committed — it will **not** regenerate the partial unique
-index migration, which is exactly what you want; that migration's SQL was hand-edited (see the
-note at the bottom of `prisma/schema.prisma`) and must never be replaced by a fresh
-`prisma migrate dev` diff.
+`migrate deploy` applies migrations as committed, in filename order — it will **not** regenerate
+the two hand-edited migrations that touch the partial unique index (the original
+`one_live_booking_per_slot`, and the later one that widened its `WHERE` clause to include
+`PENDING_VERIFICATION`; see the note at the bottom of `prisma/schema.prisma`), which is exactly
+what you want. Never replace either with a fresh `prisma migrate dev` diff.
 
 Then seed once, for the first environment only (seeding is idempotent but reseeding with default
 passwords in a live environment is a bad idea — set `SEED_ADMIN_PASSWORD` /
@@ -61,19 +62,53 @@ those as bootstrap accounts and create real named accounts before disabling them
 2. Build command / output are Next.js defaults; no changes needed.
 3. Confirm the environment variables above are set for the target environment before the first
    deploy.
-4. Deploy. Vercel builds with `pnpm build` — this also runs `prisma generate` via the `postinstall`
-   hook already configured by `prisma`'s own package scripts.
+4. Deploy. Vercel builds with `pnpm build`; `package.json`'s own `postinstall` script (`prisma
+   generate`) runs first, so the generated client is always in sync with `schema.prisma` on a
+   clean install — deliberately not relied on as an implicit side effect of installing `prisma`
+   itself, since pnpm's dependency-script policy has changed across major versions and a build
+   that quietly stops generating the client fails in a confusing way (a runtime "cannot find
+   module" deep in `.prisma/client`, not a clear build error).
 
 ## 5. Verify after cutover
 
 - `/rules` loads and shows the seeded `VenueSetting`.
+- `/api/health` returns `{"status":"ok"}` — it runs a real `SELECT 1`, so this also confirms
+  Vercel can actually reach Neon, not just that the deploy built.
 - Log in as the seeded ADMIN, confirm `/admin/pricing`, `/admin/users`, `/admin/reports`,
   `/admin/audit` are reachable and a MODERATOR account is refused them.
-- Book one real slot end to end on `/book`, then cancel it from `/booking/lookup`, to confirm the
-  full write path against the production database.
+- **Set the real bKash number, advance amount, and verification window** from `/admin/pricing`'s
+  "Payment settings" section — the seeded default (`01700000000`) is a placeholder and was never
+  committed to source on purpose (see `CLAUDE.md` §8: no secrets in code). Customers will see
+  whatever's in that field immediately, so do this before announcing the site.
+- Book one real slot end to end on `/book`, submit a bKash TRXN, verify it from
+  `/admin/bookings/[id]`, then cancel it from `/booking/lookup` — confirms the full write path,
+  including the new payment-verification step, against the production database.
 - `psql "<neon-pooled-url>" -c '\d "Booking"'` and confirm `one_live_booking_per_slot` is present
-  with its `WHERE` clause — this is the single most important line in the project (see
-  `CLAUDE.md` §2 and `BUILD_PLAN.md` step 1).
+  with its `WHERE` clause covering all four live statuses — this is the single most important line
+  in the project (see `CLAUDE.md` §2 and `BUILD_PLAN.md` step 1).
+- Load the site over plain `http://` once and confirm it redirects to `https://` — Vercel does
+  this automatically, but it's worth confirming rather than assuming, since `Strict-Transport-
+  Security` (see below) only protects requests *after* the first successful HTTPS one.
+
+## Production hardening already in place
+
+Worth knowing before you announce the site, not things you need to configure:
+
+- **Security headers** (`next.config.ts`): `X-Frame-Options: DENY`, `X-Content-Type-Options:
+  nosniff`, `Strict-Transport-Security`, a locked-down `Permissions-Policy`, and no
+  `X-Powered-By` header. No `Content-Security-Policy` — this app has no client-side third-party
+  scripts today, so a CSP would either be a no-op or (worse) a false sense of security; add one
+  deliberately if that changes.
+- **Rate limiting is database-backed** (`RateLimitBucket`, `lib/auth/rate-limit.ts`), specifically
+  because Vercel's serverless functions don't guarantee instance reuse — an in-memory limiter
+  would silently stop limiting anything in production. Applies to login attempts and to
+  `holdSlotAction` (the entry point of the public booking flow).
+- **`/api/health`** does a real database round trip, not just "the process is up" — point your
+  uptime monitor at it, not `/`.
+- **`robots.txt`** (`app/robots.ts`) disallows `/admin`, `/login`, `/api/` from search indexing.
+- **Branded error/404 pages** (`app/error.tsx`, `app/not-found.tsx`) replace Next.js's generic
+  ones — a customer mid-booking who hits an error still sees the app's own design, with a way
+  back to `/book`, not a bare stack-trace-adjacent page.
 
 ## CI
 

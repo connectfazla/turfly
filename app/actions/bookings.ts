@@ -83,7 +83,7 @@ export interface HoldSlotResult {
 export async function holdSlotAction(input: HoldSlotFormInput): Promise<ActionResult<HoldSlotResult>> {
   try {
     const ip = clientIpFromHeaders(await headers());
-    if (isRateLimited(`hold:${ip}`)) {
+    if (await isRateLimited(`hold:${ip}`)) {
       return { ok: false, error: 'Too many attempts. Please wait a while and try again.', code: 'RATE_LIMITED' };
     }
     const parsed = holdSlotSchema.parse(input);

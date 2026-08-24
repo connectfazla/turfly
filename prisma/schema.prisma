@@ -283,6 +283,23 @@ model AuditLog {
   @@index([createdAt])
 }
 
+// ---------------------------------------------------------------- rate limiting
+
+/// Backs lib/auth/rate-limit.ts. Deliberately NOT an in-memory Map: Vercel
+/// serverless functions are not guaranteed to reuse the same instance
+/// between requests, so an in-memory bucket would silently stop limiting
+/// anything under real production traffic — this table is the shared
+/// store every instance reads/writes, keyed by e.g. "login:1.2.3.4" or
+/// "hold:1.2.3.4". Rows are opportunistically pruned once stale rather
+/// than on a cron (same pattern as sweepExpiredHolds) — see rate-limit.ts.
+model RateLimitBucket {
+  key         String   @id
+  count       Int      @default(1)
+  windowStart DateTime @default(now())
+
+  @@index([windowStart])
+}
+
 // ================================================================
 // REQUIRED MANUAL MIGRATION STEP
 // ================================================================

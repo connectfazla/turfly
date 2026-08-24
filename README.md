@@ -508,8 +508,9 @@ which need real account credentials this repository's automation does not have.
 
 - **SMS notifications are not implemented.** `SMS_API_KEY` is reserved in the env var list per
   the original spec, but only the email channel (`ResendNotifier`) exists today.
-- **The login rate limiter is in-memory, per-process** (`lib/auth/rate-limit.ts`). Correct for a
-  single-instance deployment; a multi-instance one would need a shared store.
+- ~~The login rate limiter is in-memory, per-process~~ — fixed: it's backed by a `RateLimitBucket`
+  table now (`lib/auth/rate-limit.ts`), specifically so it holds up across Vercel's serverless
+  instances rather than resetting on every cold start.
 - **Utilisation in `/admin/reports` is an estimate**: it divides booked slots by
   `days × 15 bookable slots`, without subtracting blackouts from that denominator. Good enough
   for the qualitative "which slots are dead" read the report is for, not a billing figure.

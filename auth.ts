@@ -31,7 +31,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const { email, password } = parsed.data;
 
         const ip = clientIpFromHeaders(request.headers);
-        if (isRateLimited(`login:${ip}`)) {
+        if (await isRateLimited(`login:${ip}`)) {
           throw new Error('RATE_LIMITED');
         }
 
