@@ -65,7 +65,7 @@ export function PaymentSettingsForm({ current }: { current: PaymentSettingsFormI
             className="w-32 rounded-(--radius-input)"
             {...form.register('depositPercent')}
           />
-          <span className="text-caption text-text-muted">% of each booking's price</span>
+          <span className="text-caption text-text-muted">% of each booking&apos;s price</span>
         </div>
         {form.formState.errors.depositPercent ? (
           <p className="text-caption text-danger">{form.formState.errors.depositPercent.message}</p>
