@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { SignInButton, SignUpButton, Show, UserButton } from '@clerk/nextjs';
 import { getVenueName } from '@/lib/venue';
 
 /** The venue name is read from the database, not hard-coded, so this
@@ -27,6 +28,26 @@ export async function SiteHeader() {
           <Link href="/rules" className="hover:text-text">
             Rules
           </Link>
+          {/* Clerk covers the new tenant/customer-facing account layer -
+           * staff/admin login is unrelated and still lives at /login
+           * (Auth.js), unaffected by this. Nothing here is enforced yet;
+           * these controls are the visible entry point while that layer
+           * is built out. */}
+          <Show when="signed-out">
+            <SignInButton mode="modal">
+              <button className="hover:text-text">Sign in</button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <button className="rounded-(--radius-input) bg-accent px-3 py-1.5 text-white hover:bg-accent/90">
+                Sign up
+              </button>
+            </SignUpButton>
+          </Show>
+          <Show when="signed-in">
+            {/* Sign-out redirect is configured in the Clerk dashboard in
+             * this SDK version, not as a per-component prop. */}
+            <UserButton />
+          </Show>
         </nav>
       </div>
     </header>
