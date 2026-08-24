@@ -95,24 +95,56 @@ enum PaymentClaimStatus {
 
 // ---------------------------------------------------------------- staff
 
-/// Staff only. Customers are NEVER Users — they do not authenticate.
+/// One row per human staff member — the FK anchor every mutation points at
+/// (Booking.createdById, Blackout.createdById, Payment.receivedById,
+/// AuditLog.actorId). Customers are NEVER Users — they do not authenticate
+/// as staff.
+///
+/// Authentication itself lives in Clerk; this row is the local identity
+/// that Clerk account binds to, via clerkUserId. Keeping it (rather than
+/// storing bare Clerk ids on every FK) is what lets an audit entry or an
+/// old booking still render "who did this" after the Clerk account is
+/// deleted — see the Clerk-cutover plan's Decision 1.
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  name         String
-  role         Role      @default(MODERATOR)
-  isActive     Boolean   @default(true)
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id String @id @default(cuid())
 
-  bookingsCreated Booking[]  @relation("BookingCreatedBy")
-  paymentsTaken   Payment[]  @relation("PaymentReceivedBy")
+  /// The bound Clerk account. Null means "invited but has never signed in
+  /// yet" (VenueStaff grant exists, the person hasn't accepted) or, for
+  /// the legacy pre-Clerk rows, "not yet rebound to a real Clerk user".
+  clerkUserId String? @unique
+  email       String  @unique
+  name        String
+
+  /// SECURITY: the ONLY address allowed to bind a Clerk account to this
+  /// row on first sign-in, and only when Clerk reports that address
+  /// verified. Deliberately separate from `email` (which an owner can
+  /// edit for display) so editing a display address can never widen who
+  /// is allowed to claim the row. See lib/auth/require-role.ts's
+  /// resolveStaffUser().
+  invitedEmail String?
+
+  /// LEGACY (Auth.js credentials login). Nullable as of the Clerk cutover
+  /// — new rows never get one — and dropped entirely in a later migration
+  /// once no code reads it.
+  passwordHash String?
+  /// LEGACY (ADMIN | MODERATOR). Superseded by the derived OWNER /
+  /// MANAGER / BOOKIE model: ownership comes from Tenant.ownerClerkUserId
+  /// and staff roles from VenueStaff. Dropped in a later migration.
+  role Role @default(MODERATOR)
+
+  isActive    Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  bookingsCreated Booking[]    @relation("BookingCreatedBy")
+  paymentsTaken   Payment[]    @relation("PaymentReceivedBy")
   blackouts       Blackout[]
   auditEntries    AuditLog[]
+  venueGrants     VenueStaff[]
 
   @@index([role, isActive])
+  @@index([invitedEmail])
 }
 
 // ---------------------------------------------------------------- tenancy
@@ -187,32 +219,38 @@ model Venue {
   @@index([tenantId])
 }
 
-/// A staff member's role at ONE specific venue. Owners are never rows
-/// here (see VenueStaffRole's doc comment) — this table exists purely
-/// because Clerk Organization roles are org-wide, not scoped to one
+/// A grant: this staff member has this role at THIS one venue. Owners are
+/// never rows here (see VenueStaffRole's doc comment) — this table exists
+/// purely because Clerk Organization roles are org-wide, not scoped to one
 /// venue within a multi-venue tenant, so per-venue Manager/Bookie access
-/// has to be tracked ourselves. name/email are cached from Clerk purely
-/// for display without an extra API call per row rendered — clerkUserId
-/// remains the source of truth for who this actually is.
+/// has to be tracked ourselves.
+///
+/// Points at User.id, NOT at a bare Clerk id: User is the single "one row
+/// per human" record every other FK in the schema already references, so
+/// keying grants the same way is what lets a grant and a booking that
+/// person created resolve to the same identity. A grant can exist before
+/// the person has ever signed in (User.clerkUserId still null) — that is
+/// exactly the pending-invitation state.
 model VenueStaff {
-  id                   String         @id @default(cuid())
-  venueId              String
-  venue                Venue          @relation(fields: [venueId], references: [id])
+  id       String @id @default(cuid())
+  venueId  String
+  venue    Venue  @relation(fields: [venueId], references: [id])
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
   /// Denormalized from venue.tenantId — lets a tenant-wide staff listing
   /// query without joining through every venue.
-  tenantId             String
-  clerkUserId          String
-  role                 VenueStaffRole
-  isActive             Boolean        @default(true)
-  name                 String?
-  email                String?
-  invitedByClerkUserId String?
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
+  tenantId String
 
-  @@unique([venueId, clerkUserId])
+  role     VenueStaffRole
+  isActive Boolean        @default(true)
+
+  invitedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([venueId, userId])
   @@index([tenantId])
-  @@index([clerkUserId])
+  @@index([userId])
 }
 
 /// Platform-level super admin — deliberately just a membership list, no

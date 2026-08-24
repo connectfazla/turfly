@@ -37,6 +37,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user || !user.isActive) return null;
+        // passwordHash is nullable as of the Clerk cutover (Migration M1) —
+        // a Clerk-native staff row has none, and must never be able to
+        // authenticate through this legacy credentials path.
+        if (!user.passwordHash) return null;
 
         const passwordMatches = await bcrypt.compare(password, user.passwordHash);
         if (!passwordMatches) return null;
