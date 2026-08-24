@@ -47,3 +47,7 @@ test-results/
 
 # graphify knowledge-graph output (generated, local tooling artifact)
 /graphify-out/
+
+# locally-installed agent skills (local dev tooling, not app source)
+/.agents/
+/skills-lock.json
