@@ -20,7 +20,7 @@ import {
   updateBookingNote,
   verifyPaymentClaim,
 } from '@/lib/booking-engine';
-import { requireRole } from '@/lib/auth/require-role';
+import { ForbiddenError, requireRole } from '@/lib/auth/require-role';
 import { prisma } from '@/lib/prisma';
 import { parseDateParam } from '@/lib/format';
 import {
@@ -59,6 +59,30 @@ function fail(error: unknown): ActionResult<never> {
   }
   console.error(error);
   return { ok: false, error: 'Something went wrong. Please try again.' };
+}
+
+/**
+ * Refuses a booking that does not belong to the caller's venue.
+ *
+ * Every action in this file takes a bare `bookingId` straight from a form
+ * payload. Without this, a staff member at venue A could check in, cancel,
+ * reschedule, annotate, or take payment on venue B's booking simply by
+ * substituting an id — a textbook IDOR, and one that crosses a tenant
+ * boundary. The role check above proves WHO you are; this proves the row
+ * you named is yours to touch.
+ *
+ * findFirst rather than findUnique: the venueId has to be part of the WHERE,
+ * not something we fetch and then compare in JS, so there is no version of
+ * this that forgets the comparison. Not-found and not-yours deliberately
+ * return the same error, so this cannot be used to probe which booking ids
+ * exist on other venues.
+ */
+async function assertBookingAtVenue(bookingId: string, venueId: string): Promise<void> {
+  const found = await prisma.booking.findFirst({
+    where: { id: bookingId, venueId },
+    select: { id: true },
+  });
+  if (!found) throw new ForbiddenError('That booking is not available.');
 }
 
 /** Parses a yyyy-MM-dd form field into a Date, throwing (caught by
@@ -118,6 +142,7 @@ export async function checkInBookingAction(input: { bookingId: string }): Promis
   try {
     const staff = await requireRole();
     const parsed = checkInSchema.parse(input);
+    await assertBookingAtVenue(parsed.bookingId, staff.venueId);
     const booking = await checkInBooking({ bookingId: parsed.bookingId, staffUserId: staff.id });
     revalidatePath('/admin');
     revalidatePath(`/admin/bookings/${booking.id}`);
@@ -133,6 +158,7 @@ export async function markNoShowAction(input: { bookingId: string }): Promise<Ac
   try {
     const staff = await requireRole();
     const parsed = markNoShowSchema.parse(input);
+    await assertBookingAtVenue(parsed.bookingId, staff.venueId);
     const booking = await markNoShow({ bookingId: parsed.bookingId, staffUserId: staff.id });
     revalidatePath('/admin');
     revalidatePath(`/admin/bookings/${booking.id}`);
@@ -152,6 +178,7 @@ export async function cancelBookingStaffAction(input: {
   try {
     const staff = await requireRole();
     const parsed = cancelStaffSchema.parse(input);
+    await assertBookingAtVenue(parsed.bookingId, staff.venueId);
     const booking = await cancelBooking({
       bookingId: parsed.bookingId,
       actor: { type: 'STAFF', userId: staff.id },
@@ -179,9 +206,10 @@ export async function rescheduleBookingStaffAction(input: {
   try {
     const staff = await requireRole();
     const parsed = rescheduleStaffSchema.parse(input);
+    await assertBookingAtVenue(parsed.bookingId, staff.venueId);
 
-    const previous = await prisma.booking.findUnique({
-      where: { id: parsed.bookingId },
+    const previous = await prisma.booking.findFirst({
+      where: { id: parsed.bookingId, venueId: staff.venueId },
       select: { date: true, slotIndex: true },
     });
 
@@ -207,6 +235,7 @@ export async function recordPaymentAction(input: RecordPaymentFormInput): Promis
   try {
     const staff = await requireRole('OWNER', 'MANAGER');
     const parsed = recordPaymentSchema.parse(input);
+    await assertBookingAtVenue(parsed.bookingId, staff.venueId);
     const booking = await recordPayment({
       bookingId: parsed.bookingId,
       amount: parsed.amount,
@@ -230,6 +259,7 @@ export async function verifyPaymentAction(input: { bookingId: string }): Promise
   try {
     const staff = await requireRole('OWNER', 'MANAGER');
     const parsed = verifyPaymentSchema.parse(input);
+    await assertBookingAtVenue(parsed.bookingId, staff.venueId);
     const booking = await verifyPaymentClaim({ bookingId: parsed.bookingId, staffUserId: staff.id });
     void notifyBookingConfirmed(booking.id);
     revalidatePath('/admin');
@@ -248,6 +278,7 @@ export async function rejectPaymentAction(input: RejectPaymentFormInput): Promis
   try {
     const staff = await requireRole('OWNER', 'MANAGER');
     const parsed = rejectPaymentSchema.parse(input);
+    await assertBookingAtVenue(parsed.bookingId, staff.venueId);
     const booking = await rejectPaymentClaim({
       bookingId: parsed.bookingId,
       staffUserId: staff.id,
@@ -271,6 +302,7 @@ export async function updateBookingNoteAction(input: {
   try {
     const staff = await requireRole();
     const parsed = updateNoteSchema.parse(input);
+    await assertBookingAtVenue(parsed.bookingId, staff.venueId);
     const booking = await updateBookingNote({
       bookingId: parsed.bookingId,
       internalNote: parsed.internalNote,

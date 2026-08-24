@@ -26,8 +26,9 @@ function csvEscape(value: string): string {
 /** CSV export for any date range — BUILD_PLAN.md step 7. ADMIN-only, same
  * as the rest of /admin/reports. */
 export async function GET(request: NextRequest) {
+  let staff;
   try {
-    await requireRole('OWNER', 'MANAGER');
+    staff = await requireRole('OWNER', 'MANAGER');
   } catch {
     return NextResponse.json({ error: 'Not authorized.' }, { status: 403 });
   }
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
   const from = parseDateParam(params.get('from') ?? '') ?? new Date(new Date().setDate(1));
   const to = parseDateParam(params.get('to') ?? '') ?? new Date();
 
-  const report = await buildReport(from, to, 'day');
+  const report = await buildReport(staff.venueId, from, to, 'day');
 
   const header = ['Reference', 'Date', 'Time', 'Status', 'Customer', 'Phone', 'Price', 'Paid'];
   const lines = [header.join(',')];

@@ -10,6 +10,7 @@ import { fetchDayAvailability } from '@/lib/availability-service';
 import { prisma } from '@/lib/prisma';
 import { formatDateParam } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { requireRole } from '@/lib/auth/require-role';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ function monthBounds(monthParam?: string): { year: number; month: number } {
 }
 
 export default async function AdminCalendarPage({ searchParams }: Props) {
+  const staff = await requireRole();
   const { month: monthParam } = await searchParams;
   const { year, month } = monthBounds(monthParam);
 
@@ -40,7 +42,7 @@ export default async function AdminCalendarPage({ searchParams }: Props) {
 
   const days = await Promise.all(
     Array.from({ length: daysInMonth }, (_, i) => new Date(year, month, i + 1)).map(async (date) => {
-      const { slots } = await fetchDayAvailability(prisma, date, now);
+      const { slots } = await fetchDayAvailability(prisma, date, now, undefined, staff.venueId);
       return {
         date,
         freeCount: slots.filter((s) => s.state === 'AVAILABLE').length,

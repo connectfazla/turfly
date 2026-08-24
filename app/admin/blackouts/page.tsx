@@ -12,12 +12,14 @@ import { formatDateLong } from '@/lib/format';
 import { slotLabel, type SlotIndex } from '@/lib/slots';
 import { CreateBlackoutForm } from '@/components/admin/create-blackout-form';
 import { DeleteBlackoutButton } from '@/components/admin/delete-blackout-button';
+import { requireRole } from '@/lib/auth/require-role';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminBlackoutsPage() {
+  const staff = await requireRole();
   const blackouts = await prisma.blackout.findMany({
-    where: { date: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
+    where: { venueId: staff.venueId, date: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
     include: { createdBy: true },
     orderBy: [{ date: 'asc' }, { slotIndex: 'asc' }],
   });

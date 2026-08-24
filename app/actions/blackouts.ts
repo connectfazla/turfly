@@ -15,7 +15,6 @@ import { requireRole } from '@/lib/auth/require-role';
 import { parseDateParam } from '@/lib/format';
 import { slotLabel, type SlotIndex } from '@/lib/slots';
 import { createBlackoutSchema, deleteBlackoutSchema, type CreateBlackoutFormInput } from '@/lib/schemas/admin';
-import { getDefaultVenueId } from '@/lib/tenant';
 import type { ActionResult } from './bookings';
 
 /** Maps any thrown error into a safe, user-facing ActionResult. */
@@ -44,13 +43,16 @@ export async function previewBlackoutImpactAction(input: {
   slotIndex: number | '';
 }): Promise<ActionResult<{ affected: AffectedBooking[] }>> {
   try {
-    await requireRole();
+    const staff = await requireRole();
     const date = parseDateParam(input.date);
     if (!date) throw new Error('Invalid date');
     const day = dateOnly(date);
 
+    // venueId is not optional here: this returns customer NAMES, so without
+    // it a blackout preview at one venue listed other tenants' customers.
     const bookings = await prisma.booking.findMany({
       where: {
+        venueId: staff.venueId,
         date: day,
         status: { in: ['HELD', 'CONFIRMED', 'COMPLETED'] },
         ...(input.slotIndex !== '' ? { slotIndex: input.slotIndex } : {}),
@@ -86,11 +88,11 @@ export async function createBlackoutAction(
     if (!date) throw new Error('Invalid date');
     const day = dateOnly(date);
 
-    // Multi-tenant conversion, Phase 0: hardcoded to the one venue that
-    // exists today — see lib/tenant.ts's doc comment. Blackout.venueId is
-    // filtered on by fetchDayAvailability, so this must be set for a new
-    // blackout to actually take effect.
-    const venueId = await getDefaultVenueId();
+    // The caller's own venue, not the default one. Blackout.venueId is
+    // filtered on by fetchDayAvailability, so this must be set — and must be
+    // right — for a new blackout to close the intended venue's slot rather
+    // than someone else's.
+    const { venueId } = staff;
 
     const blackout = await prisma.$transaction(async (tx) => {
       const created = await tx.blackout.create({
@@ -103,6 +105,7 @@ export async function createBlackoutAction(
           entityType: 'Blackout',
           entityId: created.id,
           venueId,
+          tenantId: staff.tenantId,
           after: created as unknown as Prisma.InputJsonValue,
         },
       });
@@ -128,15 +131,21 @@ export async function deleteBlackoutAction(input: { id: string }): Promise<Actio
     const parsed = deleteBlackoutSchema.parse(input);
 
     await prisma.$transaction(async (tx) => {
-      const existing = await tx.blackout.findUnique({ where: { id: parsed.id } });
+      // findFirst with venueId in the WHERE, not findUnique by id: staff at
+      // one venue must not be able to delete another venue's blackout by
+      // substituting an id, which would silently reopen a slot that venue
+      // had deliberately closed.
+      const existing = await tx.blackout.findFirst({ where: { id: parsed.id, venueId: staff.venueId } });
       if (!existing) throw new Error('Blackout not found');
-      await tx.blackout.delete({ where: { id: parsed.id } });
+      await tx.blackout.delete({ where: { id: existing.id } });
       await tx.auditLog.create({
         data: {
           actorId: staff.id,
           action: 'BLACKOUT_DELETED',
           entityType: 'Blackout',
           entityId: existing.id,
+          venueId: staff.venueId,
+          tenantId: staff.tenantId,
           before: existing as unknown as Prisma.InputJsonValue,
         },
       });

@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { CustomerBlockControl } from '@/components/admin/customer-block-control';
 import { CustomerSearchForm } from '@/components/admin/customer-search-form';
+import { requireRole } from '@/lib/auth/require-role';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,12 +25,17 @@ export default async function AdminCustomersPage({ searchParams }: Props) {
   const { q } = await searchParams;
   const query = q?.trim() ?? '';
 
-  const where: Prisma.CustomerWhereInput = query
+  const staff = await requireRole();
+  // Customer is global by design (phone-unique, so a customer's bookings can
+  // span venues), which makes an unfiltered list every customer on the
+  // platform. "Ours" = has booked here.
+  const venueScope: Prisma.CustomerWhereInput = { bookings: { some: { venueId: staff.venueId } } };
+  const searchWhere: Prisma.CustomerWhereInput = query
     ? { OR: [{ fullName: { contains: query, mode: 'insensitive' } }, { phone: { contains: query } }] }
     : {};
 
   const customers = await prisma.customer.findMany({
-    where,
+    where: { AND: [venueScope, searchWhere] },
     orderBy: { totalBookings: 'desc' },
     take: 100,
   });

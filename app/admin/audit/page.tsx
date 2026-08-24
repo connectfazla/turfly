@@ -36,8 +36,12 @@ function diffSummary(before: unknown, after: unknown): string {
 export default async function AdminAuditPage() {
   // OWNER-only route. This is the real gate: middleware only proves
   // somebody is signed in, and the sidebar hiding the link is cosmetic.
-  await requireRole('OWNER');
+  const staff = await requireRole('OWNER');
+  // Audit rows carry other tenants' mutation history and staff names, so
+  // this is scoped like everything else. Rows written before venueId
+  // existed have null and are simply not shown here.
   const entries = await prisma.auditLog.findMany({
+    where: { venueId: staff.venueId },
     include: { actor: true },
     orderBy: { createdAt: 'desc' },
     take: PAGE_SIZE,

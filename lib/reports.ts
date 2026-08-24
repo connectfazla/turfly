@@ -84,8 +84,19 @@ function bucketKey(date: Date, granularity: Granularity): { key: string; label: 
 
 /** The one function behind /admin/reports and its CSV export - see the
  * module doc comment at the top of this file for what "revenue" and
- * "utilisation" mean here. */
-export async function buildReport(from: Date, to: Date, granularity: Granularity): Promise<ReportSummary> {
+ * "utilisation" mean here.
+ *
+ * `venueId` is REQUIRED, not optional with a default. It reports revenue,
+ * so an unscoped call is a disclosure of another business's takings, and a
+ * parameter that can be forgotten is one that will be. Making it required
+ * means the compiler finds every caller instead of some of them silently
+ * summing the whole platform. */
+export async function buildReport(
+  venueId: string,
+  from: Date,
+  to: Date,
+  granularity: Granularity,
+): Promise<ReportSummary> {
   const rangeFrom = dateOnly(from);
   const rangeTo = dateOnly(to);
   const rangeLength = daysInRange(rangeFrom, rangeTo);
@@ -97,15 +108,15 @@ export async function buildReport(from: Date, to: Date, granularity: Granularity
 
   const [bookings, priorBookings, noShowCount] = await Promise.all([
     prisma.booking.findMany({
-      where: { date: { gte: rangeFrom, lte: rangeTo }, status: { in: [...REVENUE_STATUSES] } },
+      where: { venueId, date: { gte: rangeFrom, lte: rangeTo }, status: { in: [...REVENUE_STATUSES] } },
       include: { customer: true },
       orderBy: { date: 'asc' },
     }),
     prisma.booking.findMany({
-      where: { date: { gte: priorFrom, lte: priorTo }, status: { in: [...REVENUE_STATUSES] } },
+      where: { venueId, date: { gte: priorFrom, lte: priorTo }, status: { in: [...REVENUE_STATUSES] } },
       select: { amountPaid: true },
     }),
-    prisma.booking.count({ where: { date: { gte: rangeFrom, lte: rangeTo }, status: 'NO_SHOW' } }),
+    prisma.booking.count({ where: { venueId, date: { gte: rangeFrom, lte: rangeTo }, status: 'NO_SHOW' } }),
   ]);
 
   const totalRevenue = bookings.reduce((sum, b) => sum + Number(b.amountPaid), 0);

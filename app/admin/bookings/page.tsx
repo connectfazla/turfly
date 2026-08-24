@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button';
 import { BookingStatusBadge } from '@/components/admin/booking-status-badge';
 import { BookingsFilterForm } from '@/components/admin/bookings-filter-form';
+import { requireRole } from '@/lib/auth/require-role';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,7 +41,12 @@ export default async function AdminBookingsPage({ searchParams }: Props) {
   const from = params.from ? parseDateParam(params.from) : null;
   const to = params.to ? parseDateParam(params.to) : null;
 
+  const staff = await requireRole();
+  // venueId first in the object so it can't be accidentally overwritten by
+  // a later spread, and so it's obvious this list is venue-scoped: it shows
+  // customer names and phone numbers.
   const where: Prisma.BookingWhereInput = {
+    venueId: staff.venueId,
     ...(q ? { OR: [{ reference: { contains: q, mode: 'insensitive' } }, { customer: { fullName: { contains: q, mode: 'insensitive' } } }] } : {}),
     ...(phone ? { customer: { phone: { contains: phone } } } : {}),
     ...(status ? { status: status as BookingStatus } : {}),

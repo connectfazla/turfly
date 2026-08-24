@@ -15,6 +15,7 @@
 import Link from 'next/link';
 import { CalendarCheck, Wallet, TrendingUp, Clock3, Users2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
+import { requireRole } from '@/lib/auth/require-role';
 import { dateOnly } from '@/lib/availability-service';
 import { sweepDueCompletions } from '@/lib/completion';
 import { buildReport } from '@/lib/reports';
@@ -42,6 +43,7 @@ function startOfMonth(d: Date): Date {
 }
 
 export default async function AdminDashboardPage({ searchParams }: Props) {
+  const staff = await requireRole();
   const { date: dateParam, forbidden } = await searchParams;
   const now = new Date();
   const requestedDate = dateParam ? parseDateParam(dateParam) : null;
@@ -49,18 +51,26 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
 
   await sweepDueCompletions(now);
 
+  // Every query below is scoped to the caller's venue. Unscoped, this page
+  // showed one venue's staff the whole platform's schedule, pending-payment
+  // queue, customer count and month-to-date revenue.
+  const { venueId } = staff;
+
   const [bookings, pendingVerificationCount, monthReport, totalCustomers] = await Promise.all([
     prisma.booking.findMany({
-      where: { date: day, status: { in: ['HELD', 'PENDING_VERIFICATION', 'CONFIRMED', 'COMPLETED'] } },
+      where: { venueId, date: day, status: { in: ['HELD', 'PENDING_VERIFICATION', 'CONFIRMED', 'COMPLETED'] } },
       include: { customer: true },
     }),
-    prisma.booking.count({ where: { status: 'PENDING_VERIFICATION' } }),
+    prisma.booking.count({ where: { venueId, status: 'PENDING_VERIFICATION' } }),
     // Powers both "This month" below and (by picking today's own bucket
     // out of the day-granularity breakdown) "Today's bookings/revenue" -
     // one query instead of three, and it's the exact same buildReport()
     // /admin/reports renders, so the two pages can never disagree.
-    buildReport(startOfMonth(now), now, 'day'),
-    prisma.customer.count(),
+    buildReport(venueId, startOfMonth(now), now, 'day'),
+    // Customer is a global table by design, so "total customers" has to
+    // mean "customers who have booked HERE" - a bare count() is every
+    // customer on the platform.
+    prisma.customer.count({ where: { bookings: { some: { venueId } } } }),
   ]);
   const bookingBySlot = new Map(bookings.map((b) => [b.slotIndex, b]));
   const todayBucket = monthReport.revenueByBucket.find((b) => b.key === formatDateParam(day));

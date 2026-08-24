@@ -19,7 +19,7 @@ import { RecordPaymentForm } from '@/components/admin/record-payment-form';
 import { RescheduleForm } from '@/components/admin/reschedule-form';
 import { InternalNoteForm } from '@/components/admin/internal-note-form';
 import { VerifyPaymentForm } from '@/components/admin/verify-payment-form';
-import { getDefaultVenueId } from '@/lib/tenant';
+import { requireRole } from '@/lib/auth/require-role';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,13 +28,17 @@ interface Props {
 }
 
 export default async function AdminBookingDetailPage({ params }: Props) {
+  const staff = await requireRole();
   const { id } = await params;
   const [booking, venue] = await Promise.all([
-    prisma.booking.findUnique({
-      where: { id },
+    // findFirst({ id, venueId }), never findUnique({ id }): a booking id from
+    // another tenant must 404 here, not render their customer's name, phone
+    // and payment history.
+    prisma.booking.findFirst({
+      where: { id, venueId: staff.venueId },
       include: { customer: true, payments: { orderBy: { receivedAt: 'desc' } }, createdBy: true },
     }),
-    prisma.venue.findUnique({ where: { id: await getDefaultVenueId() } }),
+    prisma.venue.findUnique({ where: { id: staff.venueId } }),
   ]);
   if (!booking) notFound();
 

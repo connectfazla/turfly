@@ -18,7 +18,7 @@
 import { auth, currentUser } from '@clerk/nextjs/server';
 import type { User, VenueStaffRole } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { getDefaultVenueId } from '@/lib/tenant';
+import { resolveActiveVenueId } from './active-venue';
 
 export class UnauthorizedError extends Error {
   constructor(message = 'You must be signed in.') {
@@ -129,17 +129,37 @@ async function resolveEffectiveRole(user: User, venueId: string): Promise<{ role
   return { role: role[grant.role], tenantId: venue.tenantId };
 }
 
+/**
+ * Requires staff access to the caller's ACTIVE venue (see
+ * lib/auth/active-venue.ts for how that's resolved). Call with no arguments
+ * to accept any staff role, or pass the roles allowed.
+ */
 export async function requireRole(...roles: StaffRole[]): Promise<StaffUser> {
+  return requireRoleForVenue(null, ...roles);
+}
+
+/**
+ * The same check, scoped to a venue the caller already knows — from a
+ * `[venueId]` route segment, or from a form payload that carried it.
+ *
+ * Prefer this wherever the venue is known. It is immune to the one real
+ * weakness of cookie-based resolution: two browser tabs on two venues share
+ * one cookie, so a mutation fired from the older tab can otherwise land on
+ * whichever venue was opened last.
+ *
+ * `venueId` is NOT trusted — it comes from the browser. It is validated
+ * against the caller's actual grants before anything is returned.
+ */
+export async function requireRoleForVenue(
+  venueId: string | null,
+  ...roles: StaffRole[]
+): Promise<StaffUser> {
   const { userId: clerkUserId } = await auth();
   if (!clerkUserId) throw new UnauthorizedError();
 
   const user = await resolveStaffUser(clerkUserId);
-  // Stage 2 resolves to the single existing venue. Stage 3 replaces this
-  // with lib/auth/active-venue.ts, which picks the venue from the request
-  // (explicit param > cookie > the user's only venue) and validates the
-  // caller actually holds a grant on it.
-  const venueId = await getDefaultVenueId();
-  const { role, tenantId } = await resolveEffectiveRole(user, venueId);
+  const activeVenueId = await resolveActiveVenueId(user, venueId);
+  const { role, tenantId } = await resolveEffectiveRole(user, activeVenueId);
 
   if (roles.length > 0 && !roles.includes(role)) {
     throw new ForbiddenError();
@@ -151,7 +171,7 @@ export async function requireRole(...roles: StaffRole[]): Promise<StaffUser> {
     email: user.email,
     name: user.name,
     role,
-    venueId,
+    venueId: activeVenueId,
     tenantId,
   };
 }

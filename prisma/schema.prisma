@@ -379,9 +379,13 @@ model SlotRule {
   isBookable Boolean @default(true)
   price      Decimal @db.Decimal(10, 2)
 
-  // MULTI-TENANT: stays (dayOfWeek, slotIndex) in this pass, not
-  // (venueId, dayOfWeek, slotIndex) — same reasoning as Booking's index.
-  @@unique([dayOfWeek, slotIndex])
+  // Venue-scoped as of the tenant-isolation pass: every venue needs its own
+  // full 112-row price grid, so the old global (dayOfWeek, slotIndex) key
+  // made a second venue literally impossible to seed. Booking's partial
+  // index is NOT widened here — it stays coupled to the engine's
+  // venue-threading pass, since widening it before the queries are
+  // venue-aware buys nothing.
+  @@unique([venueId, dayOfWeek, slotIndex])
   @@index([dayOfWeek])
   @@index([venueId])
 }
@@ -399,8 +403,14 @@ model Blackout {
   createdBy   User     @relation(fields: [createdById], references: [id])
   createdAt   DateTime @default(now())
 
-  // MULTI-TENANT: stays (date, slotIndex) in this pass — same reasoning.
-  @@unique([date, slotIndex])
+  // Venue-scoped as of the tenant-isolation pass: two venues must be able
+  // to blackout the same (date, slotIndex) independently.
+  // NOTE (pre-existing, unchanged): slotIndex is nullable and Postgres
+  // treats NULLs as distinct, so "whole day" blackouts have never actually
+  // been deduped by this constraint. Fixing that needs UNIQUE NULLS NOT
+  // DISTINCT (available on Neon/PG15+) and is a real behavior change, so
+  // it is a deliberate decision, not something to slip into this pass.
+  @@unique([venueId, date, slotIndex])
   @@index([date])
   @@index([venueId])
 }
