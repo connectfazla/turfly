@@ -1,21 +1,28 @@
 /**
  * ROUTE: /admin (dashboard) — staff (ADMIN or MODERATOR).
  *
- * The "DayTimeline": all 16 slots for one day (default today, ?date=
- * to browse others), the current slot highlighted, each occupied row
- * showing the customer, phone, payment status, and a one-tap check-in.
- * Runs an opportunistic CONFIRMED -> COMPLETED sweep (lib/completion.ts)
- * before reading, since there's no cron in a project this size.
+ * Two parts: a stat-cards row (today's bookings/revenue, this month,
+ * anything awaiting payment verification — the "business at a glance"
+ * read staff want before diving into a specific day) built on top of the
+ * same buildReport() the /admin/reports page uses, so the numbers never
+ * disagree with each other; and the "DayTimeline" below it — all 16
+ * slots for one day (default today, ?date= to browse others), the
+ * current slot highlighted, each occupied row showing the customer,
+ * phone, payment status, and a one-tap check-in. Runs an opportunistic
+ * CONFIRMED -> COMPLETED sweep (lib/completion.ts) before reading, since
+ * there's no cron in a project this size.
  */
 import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
 import { dateOnly } from '@/lib/availability-service';
 import { sweepDueCompletions } from '@/lib/completion';
+import { buildReport } from '@/lib/reports';
 import { ALL_SLOT_INDEXES, currentSlotIndex, isMaintenanceSlot, slotLabel } from '@/lib/slots';
-import { formatDateLong, formatDateParam, parseDateParam } from '@/lib/format';
+import { formatBDT, formatDateLong, formatDateParam, parseDateParam } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { CheckInButton } from '@/components/admin/check-in-button';
 import { PaymentBadge } from '@/components/admin/payment-badge';
+import { StatCard } from '@/components/admin/stat-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +36,10 @@ function addDays(date: Date, days: number): Date {
   return d;
 }
 
+function startOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
 export default async function AdminDashboardPage({ searchParams }: Props) {
   const { date: dateParam, forbidden } = await searchParams;
   const now = new Date();
@@ -37,22 +48,29 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
 
   await sweepDueCompletions(now);
 
-  const [bookings, pendingVerificationCount] = await Promise.all([
+  const [bookings, pendingVerificationCount, monthReport, totalCustomers] = await Promise.all([
     prisma.booking.findMany({
       where: { date: day, status: { in: ['HELD', 'PENDING_VERIFICATION', 'CONFIRMED', 'COMPLETED'] } },
       include: { customer: true },
     }),
     prisma.booking.count({ where: { status: 'PENDING_VERIFICATION' } }),
+    // Powers both "This month" below and (by picking today's own bucket
+    // out of the day-granularity breakdown) "Today's bookings/revenue" -
+    // one query instead of three, and it's the exact same buildReport()
+    // /admin/reports renders, so the two pages can never disagree.
+    buildReport(startOfMonth(now), now, 'day'),
+    prisma.customer.count(),
   ]);
   const bookingBySlot = new Map(bookings.map((b) => [b.slotIndex, b]));
+  const todayBucket = monthReport.revenueByBucket.find((b) => b.key === formatDateParam(day));
 
   const isToday = dateOnly(now).getTime() === day.getTime();
   const highlightIndex = isToday ? currentSlotIndex(now) : null;
 
   return (
-    <div>
+    <div className="flex flex-col gap-6">
       {forbidden ? (
-        <div className="mb-6 rounded-(--radius-card) border border-danger/30 bg-surface-muted px-4 py-3 text-body text-danger">
+        <div className="rounded-(--radius-card) border border-danger/30 bg-surface-muted px-4 py-3 text-body text-danger">
           You don&apos;t have permission to view that page.
         </div>
       ) : null}
@@ -60,7 +78,7 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
       {pendingVerificationCount > 0 ? (
         <Link
           href="/admin/bookings?status=PENDING_VERIFICATION"
-          className="mb-6 flex items-center justify-between rounded-(--radius-card) border border-warning/30 bg-surface-muted px-4 py-3 text-body text-warning hover:bg-accent-soft/40"
+          className="flex items-center justify-between rounded-(--radius-card) border border-warning/30 bg-surface-muted px-4 py-3 text-body text-warning hover:bg-accent-soft/40"
         >
           <span>
             {pendingVerificationCount} booking{pendingVerificationCount === 1 ? '' : 's'} awaiting payment
@@ -70,10 +88,23 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
         </Link>
       ) : null}
 
+      <div>
+        <h1 className="text-display text-text">Dashboard</h1>
+        <p className="mt-1 text-body text-text-muted">A snapshot of the business, then today&apos;s schedule.</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+        <StatCard label="Today's bookings" value={String(todayBucket?.count ?? 0)} />
+        <StatCard label="Today's revenue" value={formatBDT(todayBucket?.revenue ?? 0)} />
+        <StatCard label="This month" value={String(monthReport.totalBookings)} />
+        <StatCard label="Awaiting payment" value={String(pendingVerificationCount)} />
+        <StatCard label="Total customers" value={String(totalCustomers)} />
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-display text-text">Dashboard</h1>
-          <p className="mt-1 text-body text-text-muted">{formatDateLong(day)}</p>
+          <h2 className="text-heading text-text">{isToday ? "Today's schedule" : formatDateLong(day)}</h2>
+          {isToday ? <p className="mt-1 text-caption text-text-muted">{formatDateLong(day)}</p> : null}
         </div>
         <div className="flex gap-2 text-caption">
           <Link
@@ -94,10 +125,16 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
           >
             Next day →
           </Link>
+          <Link
+            href="/admin/calendar"
+            className="rounded-(--radius-input) border border-border px-3 py-1.5 text-text hover:bg-surface-muted"
+          >
+            Calendar →
+          </Link>
         </div>
       </div>
 
-      <div className="mt-6 overflow-hidden rounded-(--radius-card) border border-border">
+      <div className="overflow-hidden rounded-(--radius-card) border border-border">
         {ALL_SLOT_INDEXES.map((index) => {
           const booking = bookingBySlot.get(index);
           const isCurrent = index === highlightIndex;
@@ -150,4 +187,3 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
     </div>
   );
 }
-
