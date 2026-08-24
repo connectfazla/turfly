@@ -95,6 +95,10 @@ const CANCELLATION_WINDOW_HOURS = Number(process.env.CANCELLATION_WINDOW_HOURS ?
 /** Prisma error codes we special-case. See CLAUDE.md §10. */
 const PRISMA_UNIQUE_VIOLATION = 'P2002';
 const PRISMA_WRITE_CONFLICT = 'P2034'; // serialization failure or deadlock, under Serializable isolation
+/** The hand-written partial unique index — see prisma/schema.prisma's
+ * bottom-of-file note. Named here so isSlotCollision() can tell a real slot
+ * race apart from any other unique violation on Booking. */
+const LIVE_BOOKING_INDEX = 'one_live_booking_per_slot';
 
 /** Type-narrows a caught error to Prisma's own error class and checks its
  * error code (e.g. 'P2002' for a unique-constraint violation). */
@@ -102,6 +106,28 @@ function isPrismaKnownError(err: unknown, code: string): boolean {
   return (
     err instanceof Prisma.PrismaClientKnownRequestError && err.code === code
   );
+}
+
+/**
+ * True when a P2002 came from the one-live-booking-per-slot partial index —
+ * i.e. a real race for the slot — rather than from some other unique column
+ * on Booking (today: `reference`).
+ *
+ * Prisma reports the offending constraint in `meta.target`, but the shape
+ * varies: a string[] of column names for an ordinary compound unique, a
+ * bare string naming the index for a raw/partial one like ours. Normalise
+ * both, then decide. If the target is missing entirely (older Prisma, or an
+ * index it can't attribute), fall back to treating it as a slot collision —
+ * that preserves the previous behavior for the unknown case, which is the
+ * conservative direction: a spurious "slot taken" is a worse message but a
+ * safe outcome, whereas retrying a genuine slot collision would double-book.
+ */
+export function isSlotCollision(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  const target = err.meta?.target;
+  const names = Array.isArray(target) ? target : typeof target === 'string' ? [target] : [];
+  if (names.length === 0) return true;
+  return names.some((n) => n === LIVE_BOOKING_INDEX || n === 'date' || n === 'slotIndex');
 }
 
 /**
@@ -133,7 +159,22 @@ async function runSerializable<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
       });
     } catch (err) {
       if (isPrismaKnownError(err, PRISMA_UNIQUE_VIOLATION)) {
-        throw new SlotTakenError();
+        // NOT every P2002 in here is a slot collision. The only one that
+        // means "someone else took this slot" is the partial unique index;
+        // the other reachable one is a `reference` collision, which happens
+        // when nextReference()'s count-based sequence reuses a number after
+        // a booking row was hard-deleted (e2e/concurrency.spec.ts's
+        // cleanUp() does exactly that on every run). Reporting that to a
+        // customer as "that slot was just booked by someone else" is a lie
+        // about a retryable condition — so discriminate, and let a
+        // reference collision fall through to the retry below.
+        if (isSlotCollision(err)) {
+          throw new SlotTakenError();
+        }
+        if (attempt === 0) {
+          continue; // recount and retry — a fresh reference will be picked
+        }
+        throw err;
       }
       if (isPrismaKnownError(err, PRISMA_WRITE_CONFLICT) && attempt === 0) {
         continue; // retry once
@@ -652,7 +693,20 @@ export async function rescheduleBooking(input: RescheduleBookingInput): Promise<
       throw new InvalidTransitionError(`Cannot reschedule a booking with status ${booking.status}.`);
     }
 
-    const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.newDate, now, booking.id);
+    // Availability MUST be read against the booking's own venue, not the
+    // default one. Omitting this argument made fetchDayAvailability fall
+    // back to getDefaultVenueId(), so rescheduling any non-default venue's
+    // booking validated the new slot against Venue Zero's calendar — it
+    // could move a booking onto a slot already taken at its real venue, or
+    // refuse a slot that was actually free. Harmless while one venue
+    // exists; a double-booking the moment a second one does.
+    const { day, ruleByIndex, slots } = await fetchDayAvailability(
+      tx,
+      input.newDate,
+      now,
+      booking.id,
+      booking.venueId ?? undefined,
+    );
     const slot = slots.find((s) => s.index === newSlotIndex)!;
     assertSlotBookable(slot);
 

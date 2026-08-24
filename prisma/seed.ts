@@ -12,31 +12,28 @@
  */
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import { ALL_SLOT_INDEXES, MAINTENANCE_SLOT } from '../lib/slots';
-import { ALL_DAYS_OF_WEEK, defaultSlotPrice } from '../lib/pricing';
+import { seedSlotRulesForVenue, SLOT_RULES_PER_VENUE } from '../lib/provisioning';
+import { DEFAULT_VENUE_SLUG } from '../lib/tenant';
 
 const prisma = new PrismaClient();
 
 const BCRYPT_COST = 12;
 
 async function seedSlotRules() {
-  let created = 0;
-  for (const dayOfWeek of ALL_DAYS_OF_WEEK) {
-    for (const slotIndex of ALL_SLOT_INDEXES) {
-      await prisma.slotRule.upsert({
-        where: { dayOfWeek_slotIndex: { dayOfWeek, slotIndex } },
-        update: {},
-        create: {
-          dayOfWeek,
-          slotIndex,
-          isBookable: slotIndex !== MAINTENANCE_SLOT,
-          price: defaultSlotPrice(dayOfWeek, slotIndex),
-        },
-      });
-      created += 1;
-    }
-  }
-  console.log(`  SlotRule: ${created} rows upserted (7 days x 16 slots)`);
+  // The grid itself now lives in lib/provisioning.ts so the owner-onboarding
+  // flow can seed a brand-new venue with the identical defaults. Attaches to
+  // Venue Zero when it already exists (a re-run), otherwise leaves venueId
+  // null for scripts/backfill-tenant-zero.ts to adopt — see that function's
+  // doc comment for why null is tolerated here.
+  const venueZero = await prisma.venue.findUnique({
+    where: { slug: DEFAULT_VENUE_SLUG },
+    select: { id: true },
+  });
+  const created = await seedSlotRulesForVenue(prisma, venueZero?.id ?? null);
+  console.log(
+    `  SlotRule: ${created} of ${SLOT_RULES_PER_VENUE} rows created (7 days x 16 slots)` +
+      `${created === 0 ? ' — already seeded' : ''}`,
+  );
 }
 
 async function seedUsers() {
