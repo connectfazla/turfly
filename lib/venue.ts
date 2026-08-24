@@ -4,7 +4,7 @@ import { prisma } from './prisma';
 /** Fallback only for the (should-never-happen) case where the
  * VenueSetting singleton row is missing - e.g. a database that hasn't
  * been seeded yet. */
-export const DEFAULT_VENUE_NAME = 'Ortha Turf';
+export const DEFAULT_VENUE_NAME = 'Turfly';
 
 /**
  * The VenueSetting singleton, memoized per request via React's cache().

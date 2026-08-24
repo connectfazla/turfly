@@ -1,4 +1,4 @@
-# Ortha Turf: Booking & Management System
+# Turfly: Booking & Management System
 
 A full-stack web application for booking a single football turf online, with a staff admin
 panel for running the venue day to day. Built as a university project: one developer, twelve

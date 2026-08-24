@@ -5,7 +5,7 @@ import { slotLabel, type SlotIndex } from '../slots';
 import { formatBDT, formatDateLong } from '../format';
 import type { BookingNotificationPayload, Notifier, RescheduledNotificationPayload } from './types';
 
-const FROM_ADDRESS = 'Ortha Turf <bookings@orthaturf.example>';
+const FROM_ADDRESS = 'Turfly <bookings@turfly.example>';
 
 export class ResendNotifier implements Notifier {
   private client: Resend;
