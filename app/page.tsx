@@ -9,7 +9,7 @@ import Image from 'next/image';
 import { SiteHeader } from '@/components/site/header';
 import { SiteFooter } from '@/components/site/footer';
 import { Button } from '@/components/ui/button';
-import { prisma } from '@/lib/prisma';
+import { getVenueName } from '@/lib/venue';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +27,7 @@ const VALUE_PROPS = [
 ];
 
 export default async function HomePage() {
-  const venue = await prisma.venueSetting.findUnique({ where: { id: 'singleton' } });
+  const venueName = await getVenueName();
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -44,7 +44,7 @@ export default async function HomePage() {
             <div className="flex flex-col gap-6">
               <h1 className="text-display text-text">Book the pitch in minutes.</h1>
               <p className="max-w-[46ch] text-body text-text-muted">
-                {venue?.venueName ?? 'Greenfield Turf'}: pick a date, pick a 90-minute slot, and
+                {venueName}: pick a date, pick a 90-minute slot, and
                 get your booking reference in under 90 seconds. No account needed.
               </p>
               <div className="flex flex-wrap items-center gap-3">

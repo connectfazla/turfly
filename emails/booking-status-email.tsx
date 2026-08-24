@@ -61,7 +61,7 @@ export default function BookingStatusEmail({
 
           <Hr style={{ borderColor: '#E5E7EB', margin: '20px 0' }} />
           <Text style={{ fontSize: 12, color: '#6B7280', margin: 0 }}>
-            {footerNote ?? 'Greenfield Turf — one field, open 24 hours.'}
+            {footerNote ?? 'Ortha Turf. One field, open 24 hours.'}
           </Text>
         </Container>
       </Body>

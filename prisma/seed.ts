@@ -72,9 +72,9 @@ async function seedVenueSetting() {
     update: {},
     create: {
       id: 'singleton',
-      venueName: 'Greenfield Turf',
+      venueName: 'Ortha Turf',
       contactPhone: '+8801700000000',
-      contactEmail: 'hello@greenfieldturf.example',
+      contactEmail: 'hello@orthaturf.example',
       rulesText:
         'One 90-minute slot per booking. Please arrive 10 minutes early. ' +
         'Cancellations are free up to 6 hours before your slot.',
