@@ -48,6 +48,9 @@ test-results/
 # graphify knowledge-graph output (generated, local tooling artifact)
 /graphify-out/
 
-# locally-installed agent skills (local dev tooling, not app source)
+# locally-installed agent skills (local dev tooling, not app source) -
+# .claude/skills/* are symlinks into .agents/, would be dangling for
+# anyone else who clones the repo without also running the installer
 /.agents/
 /skills-lock.json
+/.claude/skills/
