@@ -2,7 +2,7 @@
  * ROUTE: / (home) — public, no login.
  *
  * The marketing landing page. Nothing here mutates data; the venue name
- * is the only piece of live content (read from VenueSetting).
+ * is the only piece of live content (read from Venue — see lib/venue.ts).
  */
 import Link from 'next/link';
 import Image from 'next/image';

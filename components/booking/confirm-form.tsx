@@ -20,7 +20,10 @@ export interface ConfirmFormProps {
   holdExpiresAt: string;
   priceAmount: string;
   bkashNumber: string;
-  advanceAmount: number;
+  /** Now computed as venue.depositPercent% of this booking's price
+   * (VenueSetting's old fixed advanceAmount is retired — see
+   * prisma/schema.prisma). */
+  depositAmount: number;
 }
 
 export function ConfirmForm({
@@ -30,7 +33,7 @@ export function ConfirmForm({
   holdExpiresAt,
   priceAmount,
   bkashNumber,
-  advanceAmount,
+  depositAmount,
 }: ConfirmFormProps) {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
@@ -72,7 +75,7 @@ export function ConfirmForm({
       <div className="flex flex-col gap-3 rounded-(--radius-card) border border-accent/30 bg-accent-soft p-4">
         <p className="text-subheading text-text">Pay the advance to confirm your slot</p>
         <p className="text-body text-text-muted">
-          Send <span className="font-semibold text-text">{formatBDT(advanceAmount)}</span> via bKash{' '}
+          Send <span className="font-semibold text-text">{formatBDT(depositAmount)}</span> via bKash{' '}
           <span className="font-semibold text-text">Send Money</span> to:
         </p>
         <p className="select-all text-heading font-semibold tracking-wide text-accent" aria-label="bKash number">

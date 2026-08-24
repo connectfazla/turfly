@@ -2,13 +2,12 @@ import Link from 'next/link';
 import { SignInButton, SignUpButton, Show, UserButton } from '@clerk/nextjs';
 import { getVenueName } from '@/lib/venue';
 
-/** The venue name is read from the database, not hard-coded, so this
- * same codebase can be redeployed for a different venue owner by
- * changing one VenueSetting row instead of a code change - see
- * app/page.tsx, which already did this; the rest of the site's chrome
- * (this header, the footer, the admin nav, the login page) previously
- * didn't, which meant the brand name only actually changed on the
- * homepage. */
+/** The venue name is read from the database (a Venue row, not hard-coded
+ * — see lib/venue.ts), so this same codebase can be redeployed for a
+ * different venue owner without a code change - see app/page.tsx, which
+ * already did this; the rest of the site's chrome (this header, the
+ * footer, the admin nav, the login page) previously didn't, which meant
+ * the brand name only actually changed on the homepage. */
 export async function SiteHeader() {
   const venueName = await getVenueName();
 

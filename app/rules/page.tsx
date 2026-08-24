@@ -2,18 +2,19 @@
  * ROUTE: /rules — public, no login.
  *
  * Plain informational page: booking policy plus the venue's own text
- * (VenueSetting.rulesText, editable from the database so the owner can
- * update it without a redeploy) and contact details.
+ * (Venue.rulesText, editable from the database so the owner can update it
+ * without a redeploy) and contact details.
  */
 import { SiteHeader } from '@/components/site/header';
 import { SiteFooter } from '@/components/site/footer';
 import { prisma } from '@/lib/prisma';
 import { MAINTENANCE_SLOT, slotLabel } from '@/lib/slots';
+import { getDefaultVenueId } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
 
 export default async function RulesPage() {
-  const venue = await prisma.venueSetting.findUnique({ where: { id: 'singleton' } });
+  const venue = await prisma.venue.findUnique({ where: { id: await getDefaultVenueId() } });
 
   const holdMinutes = venue?.holdMinutes ?? 10;
   const cancellationWindowHours = venue?.cancellationWindowHours ?? 6;
@@ -24,7 +25,7 @@ export default async function RulesPage() {
       <SiteHeader />
       <main className="mx-auto w-full max-w-[720px] flex-1 px-4 py-8">
         <h1 className="text-display text-text">Booking rules</h1>
-        {venue ? <p className="mt-1 text-body text-text-muted">{venue.venueName}</p> : null}
+        {venue ? <p className="mt-1 text-body text-text-muted">{venue.name}</p> : null}
 
         <ul className="mt-6 flex flex-col gap-3 text-body text-text">
           <li>Each booking is one 90-minute slot.</li>

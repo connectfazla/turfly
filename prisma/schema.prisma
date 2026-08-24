@@ -1,7 +1,23 @@
-// Turf Booking & Management System — data model
-// See CLAUDE.md §2 and §5. The partial unique index on Booking is NOT expressible
-// in Prisma schema syntax — it must be added by hand in a migration. Read the note
-// at the bottom of this file before running migrate.
+// Turfly — data model
+// See CLAUDE.md §2 and §5, and the multi-tenant SaaS architecture addendum
+// (CLAUDE.md §11) for the Tenant/Venue/VenueStaff model below. The partial
+// unique index on Booking is NOT expressible in Prisma schema syntax — it
+// must be added by hand in a migration. Read the note at the bottom of this
+// file before running migrate.
+//
+// MULTI-TENANT PHASE 0 (this pass): Tenant/Venue/VenueStaff/PlatformAdmin
+// are new. Booking/SlotRule/Blackout/Payment/AuditLog gain a NULLABLE
+// venueId (Booking/AuditLog also gain a nullable tenantId) — nullable
+// deliberately, because the partial unique index and every application
+// query stay untouched in this pass (see the note at the bottom of this
+// file). Every existing row is backfilled to "Venue Zero" by
+// scripts/backfill-tenant-zero.ts. VenueSetting is retired: its fields
+// move onto Venue (a per-venue settings row is just Venue itself — a
+// separate singleton-settings model doesn't fit multi-venue). Making
+// venueId NOT NULL and widening the partial index to include it is
+// deferred to a later pass, once lib/booking-engine.ts's queries are
+// actually venue-aware (not just column-populated) — see this file's
+// bottom note.
 
 generator client {
   provider = "prisma-client-js"
@@ -17,6 +33,15 @@ datasource db {
 enum Role {
   ADMIN
   MODERATOR
+}
+
+/// Per-venue staff role — deliberately does NOT include an OWNER value.
+/// Ownership is derived from Clerk Organization membership (org:admin role
+/// on the venue's tenant), not a VenueStaff row — see CLAUDE.md §11. Only
+/// staff a Turf Owner explicitly invites get a VenueStaff row.
+enum VenueStaffRole {
+  MANAGER
+  BOOKIE
 }
 
 enum BookingStatus {
@@ -72,15 +97,15 @@ enum PaymentClaimStatus {
 
 /// Staff only. Customers are NEVER Users — they do not authenticate.
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String    @id @default(cuid())
+  email        String    @unique
   passwordHash String
   name         String
-  role         Role     @default(MODERATOR)
-  isActive     Boolean  @default(true)
+  role         Role      @default(MODERATOR)
+  isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   bookingsCreated Booking[]  @relation("BookingCreatedBy")
   paymentsTaken   Payment[]  @relation("PaymentReceivedBy")
@@ -90,26 +115,144 @@ model User {
   @@index([role, isActive])
 }
 
+// ---------------------------------------------------------------- tenancy
+
+/// One Clerk Organization = one Tenant = one Turf Owner's business account.
+/// clerkOrgId is nullable ONLY for "Tenant Zero" (see the bottom-of-file
+/// backfill note) — every tenant created through the real owner-onboarding
+/// flow always has one. plan/status are unused today (no billing yet) —
+/// present so a future billing layer doesn't need a schema migration to
+/// add them, per the SaaS architecture plan's explicit non-goal.
+model Tenant {
+  id               String   @id @default(cuid())
+  clerkOrgId       String?  @unique
+  name             String
+  ownerClerkUserId String?
+  ownerEmail       String?
+  plan             String   @default("free")
+  status           String   @default("active")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  venues Venue[]
+
+  @@index([clerkOrgId])
+}
+
+/// A single physical turf. One Tenant can own several (multi-venue
+/// support). Everything that was the single global VenueSetting row is
+/// now a field here instead — see the bottom-of-file note for why
+/// VenueSetting itself is gone.
+model Venue {
+  id                       String   @id @default(cuid())
+  tenantId                 String
+  tenant                   Tenant   @relation(fields: [tenantId], references: [id])
+  /// Public booking URL component: /v/[slug]/book. Owner-editable but
+  /// must stay URL-safe — validated at the Zod layer, not here.
+  slug                     String   @unique
+  /// Short code folded into the booking reference: TRF-{code}-YYYY-NNNN
+  /// (see the bottom-of-file note — the reference format itself doesn't
+  /// change until the venue-scoping pass that also touches
+  /// lib/booking-engine.ts).
+  code                     String   @unique
+  name                     String
+  contactPhone             String
+  contactEmail             String?
+  rulesText                String
+  holdMinutes              Int      @default(10)
+  cancellationWindowHours  Int      @default(6)
+  bookingWindowDays        Int      @default(14)
+  bkashNumber              String   @default("01700000000")
+  /// Replaces VenueSetting.advanceAmount's fixed BDT figure — the deposit
+  /// customers must pay is now a percentage of each booking's price.
+  /// Booking.depositAmount (a later pass) snapshots the computed BDT
+  /// figure at hold time, same reasoning as Booking.priceAmount already
+  /// snapshotting SlotRule.price.
+  depositPercent           Int      @default(30)
+  paymentVerificationHours Int      @default(24)
+  /// Field only, for now — every date/slot calculation stays hardcoded to
+  /// Asia/Dhaka regardless of this value (SaaS architecture plan's
+  /// explicit non-goal: no multi-region support yet).
+  timezone                 String   @default("Asia/Dhaka")
+  isActive                 Boolean  @default(true)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  slotRules SlotRule[]
+  blackouts Blackout[]
+  bookings  Booking[]
+  payments  Payment[]
+  staff     VenueStaff[]
+
+  @@index([tenantId])
+}
+
+/// A staff member's role at ONE specific venue. Owners are never rows
+/// here (see VenueStaffRole's doc comment) — this table exists purely
+/// because Clerk Organization roles are org-wide, not scoped to one
+/// venue within a multi-venue tenant, so per-venue Manager/Bookie access
+/// has to be tracked ourselves. name/email are cached from Clerk purely
+/// for display without an extra API call per row rendered — clerkUserId
+/// remains the source of truth for who this actually is.
+model VenueStaff {
+  id                   String         @id @default(cuid())
+  venueId              String
+  venue                Venue          @relation(fields: [venueId], references: [id])
+  /// Denormalized from venue.tenantId — lets a tenant-wide staff listing
+  /// query without joining through every venue.
+  tenantId             String
+  clerkUserId          String
+  role                 VenueStaffRole
+  isActive             Boolean        @default(true)
+  name                 String?
+  email                String?
+  invitedByClerkUserId String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  @@unique([venueId, clerkUserId])
+  @@index([tenantId])
+  @@index([clerkUserId])
+}
+
+/// Platform-level super admin — deliberately just a membership list, no
+/// permissions model, since there's a population of one today. A DB
+/// table rather than an env var so it can be granted/revoked without a
+/// redeploy (same "DB value, not baked into source" reasoning as
+/// Venue.bkashNumber).
+model PlatformAdmin {
+  clerkUserId String   @id
+  name        String?
+  email       String?
+  createdAt   DateTime @default(now())
+}
+
 // ---------------------------------------------------------------- public
 
 /// Identified by mobile number. No password, no login.
 model Customer {
-  id             String   @id @default(cuid())
-  phone          String   @unique
-  fullName       String
+  id            String   @id @default(cuid())
+  phone         String   @unique
+  fullName      String
   /// Column stays nullable so old rows never need a backfill, but every
   /// NEW booking (public confirm form, counter form) requires it at the
   /// Zod layer — see lib/schemas/booking.ts's confirmBookingSchema.
-  email          String?
+  email         String?
   /// Same nullability story as email above.
-  address        String?
-  teamName       String?
-  totalBookings  Int      @default(0)
-  totalNoShows   Int      @default(0)
-  isBlocked      Boolean  @default(false)
-  blockedReason  String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  address       String?
+  teamName      String?
+  /// Optional Clerk account link — Customer stays global (not venue- or
+  /// tenant-scoped), deliberately, because the "my bookings" view the
+  /// SaaS product wants must span every venue a customer has booked at,
+  /// not just one. Nullable: booking with just a phone number, no
+  /// account, keeps working exactly as before.
+  clerkUserId   String?  @unique
+  totalBookings Int      @default(0)
+  totalNoShows  Int      @default(0)
+  isBlocked     Boolean  @default(false)
+  blockedReason String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   bookings Booking[]
 
@@ -120,20 +263,31 @@ model Customer {
 // ---------------------------------------------------------------- core
 
 model Booking {
-  id            String        @id @default(cuid())
-  reference     String        @unique // TRF-2026-0184
+  id        String @id @default(cuid())
+  reference String @unique // TRF-2026-0184
 
-  customerId    String
-  customer      Customer      @relation(fields: [customerId], references: [id])
+  /// Nullable in THIS pass only — see the bottom-of-file note.
+  /// scripts/backfill-tenant-zero.ts sets it on every existing row; every
+  /// row created from here on also gets it (lib/booking-engine.ts still
+  /// writes without it for now, since the engine itself isn't venue-aware
+  /// yet — the backfill script fixes those rows up immediately after).
+  venueId  String?
+  venue    Venue?  @relation(fields: [venueId], references: [id])
+  /// Denormalized from venue.tenantId — lets Super Admin cross-tenant
+  /// reports query Booking without joining through Venue.
+  tenantId String?
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
 
   /// Calendar day only, no time component. NEVER compare directly with new Date().
-  date          DateTime      @db.Date
+  date      DateTime @db.Date
   /// 0..15. Slot n starts at n * 90 minutes after midnight. 4 = maintenance.
-  slotIndex     Int
+  slotIndex Int
 
-  status        BookingStatus @default(HELD)
+  status                       BookingStatus @default(HELD)
   /// Set only while status = HELD. Swept inside createBooking's transaction.
-  holdExpiresAt DateTime?
+  holdExpiresAt                DateTime?
   /// Set only while status = PENDING_VERIFICATION — the failsafe deadline
   /// for staff to verify the submitted bKash TRXN before the slot is
   /// automatically released back to the pool. Same shape as holdExpiresAt,
@@ -144,29 +298,32 @@ model Booking {
   paymentStatus PaymentStatus @default(UNPAID)
   amountPaid    Decimal       @default(0) @db.Decimal(10, 2)
 
-  source        BookingSource @default(ONLINE)
-  createdById   String?
-  createdBy     User?         @relation("BookingCreatedBy", fields: [createdById], references: [id])
+  source      BookingSource @default(ONLINE)
+  createdById String?
+  createdBy   User?         @relation("BookingCreatedBy", fields: [createdById], references: [id])
 
-  checkedInAt   DateTime?
-  cancelledAt   DateTime?
-  cancelReason  String?
+  checkedInAt  DateTime?
+  cancelledAt  DateTime?
+  cancelReason String?
 
-  customerNote  String?
-  internalNote  String?
+  customerNote String?
+  internalNote String?
 
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  payments      Payment[]
+  payments Payment[]
 
   // NOTE: this @@unique is a PLACEHOLDER so Prisma knows the shape.
   // It must be REPLACED by the partial index in the migration — see bottom of file.
+  // MULTI-TENANT: still keyed on (date, slotIndex) only, NOT (venueId, date,
+  // slotIndex), in this pass — see the bottom-of-file note for why.
   @@unique([date, slotIndex], name: "one_live_booking_per_slot")
   @@index([date, status])
   @@index([customerId])
   @@index([status, holdExpiresAt])
   @@index([reference])
+  @@index([venueId])
 }
 
 // ---------------------------------------------------------------- config
@@ -176,18 +333,27 @@ model Booking {
 /// maintenance window is data rather than a hard-coded condition.
 model SlotRule {
   id         String  @id @default(cuid())
+  /// Nullable in this pass — see Booking.venueId's doc comment above.
+  venueId    String?
+  venue      Venue?  @relation(fields: [venueId], references: [id])
   dayOfWeek  Int // 0 = Sunday … 6 = Saturday
   slotIndex  Int // 0..15
   isBookable Boolean @default(true)
   price      Decimal @db.Decimal(10, 2)
 
+  // MULTI-TENANT: stays (dayOfWeek, slotIndex) in this pass, not
+  // (venueId, dayOfWeek, slotIndex) — same reasoning as Booking's index.
   @@unique([dayOfWeek, slotIndex])
   @@index([dayOfWeek])
+  @@index([venueId])
 }
 
 /// A null slotIndex closes the entire day.
 model Blackout {
   id          String   @id @default(cuid())
+  /// Nullable in this pass — see Booking.venueId's doc comment above.
+  venueId     String?
+  venue       Venue?   @relation(fields: [venueId], references: [id])
   date        DateTime @db.Date
   slotIndex   Int?
   reason      String
@@ -195,54 +361,39 @@ model Blackout {
   createdBy   User     @relation(fields: [createdById], references: [id])
   createdAt   DateTime @default(now())
 
+  // MULTI-TENANT: stays (date, slotIndex) in this pass — same reasoning.
   @@unique([date, slotIndex])
   @@index([date])
+  @@index([venueId])
 }
 
-/// Venue-wide settings, single row. Kept in the DB so the owner can change
-/// them without a redeploy.
-model VenueSetting {
-  id                      String  @id @default("singleton")
-  venueName               String
-  contactPhone            String
-  contactEmail            String?
-  rulesText               String
-  holdMinutes             Int     @default(10)
-  cancellationWindowHours Int     @default(6)
-  bookingWindowDays       Int     @default(14)
-  /// The personal/merchant bKash "Send Money" number customers pay the
-  /// advance to. Deliberately a DB value, not a hard-coded constant or
-  /// even an env var baked into a commit — the owner edits it from
-  /// /admin/pricing, so it's never sitting in source history and can be
-  /// rotated without a redeploy. Seeded with a placeholder; the real
-  /// number is entered once, after first login.
-  bkashNumber             String  @default("01700000000")
-  /// The advance amount (BDT) required to move a booking out of
-  /// PENDING_VERIFICATION. Configurable so a price change doesn't need a
-  /// code deploy.
-  advanceAmount           Decimal @default(1000) @db.Decimal(10, 2)
-  /// Hours a PENDING_VERIFICATION booking is held before it auto-expires
-  /// if staff never verify or reject the submitted TRXN.
-  paymentVerificationHours Int    @default(24)
-  updatedAt               DateTime @updatedAt
-}
+// VenueSetting (the pre-multi-tenant global settings singleton) is RETIRED
+// as of the multi-tenant conversion — its fields all live on Venue now
+// (see the Venue model above and this file's bottom note). It was read
+// one last time by scripts/backfill-tenant-zero.ts to create "Venue
+// Zero" before this migration dropped its table.
 
 // ---------------------------------------------------------------- money
 
 /// A booking may have several rows so advances and balances are both traceable.
 model Payment {
-  id             String        @id @default(cuid())
-  bookingId      String
-  booking        Booking       @relation(fields: [bookingId], references: [id])
-  amount         Decimal       @db.Decimal(10, 2)
-  method         PaymentMethod @default(CASH)
+  id           String        @id @default(cuid())
+  bookingId    String
+  booking      Booking       @relation(fields: [bookingId], references: [id])
+  /// Denormalized from booking.venueId — the revenue-report read path
+  /// filters heavily by venue+date and this avoids a join. Nullable in
+  /// this pass, same as Booking.venueId.
+  venueId      String?
+  venue        Venue?        @relation(fields: [venueId], references: [id])
+  amount       Decimal       @db.Decimal(10, 2)
+  method       PaymentMethod @default(CASH)
   /// Null only while status = PENDING — a customer's self-reported claim
   /// has no staff receiver until someone verifies it. Every VERIFIED or
   /// REJECTED row has this set to whoever made that call.
-  receivedById   String?
-  receivedBy     User?         @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
-  receivedAt     DateTime      @default(now())
-  note           String?
+  receivedById String?
+  receivedBy   User?         @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
+  receivedAt   DateTime      @default(now())
+  note         String?
 
   /// Defaults to VERIFIED: staff-recorded rows (RecordPaymentForm) are
   /// money already physically taken, nothing left to verify. Only the
@@ -259,6 +410,7 @@ model Payment {
   @@index([bookingId])
   @@index([receivedAt])
   @@index([status])
+  @@index([venueId])
 }
 
 // ---------------------------------------------------------------- audit
@@ -271,16 +423,23 @@ model AuditLog {
   actorId    String?
   actor      User?    @relation(fields: [actorId], references: [id])
   action     String // BOOKING_CREATED, BOOKING_CANCELLED, PRICE_UPDATED, …
-  entityType String // Booking | Customer | SlotRule | Blackout | User
+  entityType String // Booking | Customer | SlotRule | Blackout | User | Venue | Tenant
   entityId   String
   before     Json?
   after      Json?
   ipAddress  String?
+  /// Both nullable — some actions (venue creation, staff invite) are
+  /// tenant-level, not tied to one venue; entries written before this
+  /// pass have neither.
+  venueId    String?
+  tenantId   String?
   createdAt  DateTime @default(now())
 
   @@index([entityType, entityId])
   @@index([actorId, createdAt])
   @@index([createdAt])
+  @@index([venueId])
+  @@index([tenantId])
 }
 
 // ---------------------------------------------------------------- rate limiting
@@ -333,4 +492,40 @@ model RateLimitBucket {
 // enum value — Postgres will not let a transaction both add an enum value
 // and use that value (e.g. in an index predicate) in the same transaction,
 // and `prisma migrate dev` runs each migration.sql as one transaction.
+//
+// UPDATE (multi-tenant SaaS conversion, Phase 0): Tenant/Venue/VenueStaff/
+// PlatformAdmin were added, and Booking/SlotRule/Blackout/Payment/AuditLog
+// each gained a NULLABLE venueId (Booking/AuditLog also gained a nullable
+// tenantId). The partial index above is DELIBERATELY left keyed on
+// (date, slotIndex) only in this pass, NOT (venueId, date, slotIndex) —
+// widening it now would be premature: lib/booking-engine.ts's queries
+// aren't venue-aware yet (that's a later pass), so a venue-scoped index
+// would just be unused dead weight until the code that needs it exists.
+// scripts/backfill-tenant-zero.ts populates venueId on every existing
+// row (there is, as of this pass, only ever one venue — "Venue Zero" —
+// so this is a no-op for query correctness either way).
+//
+// The NEXT migration (once lib/booking-engine.ts, lib/availability-service.ts,
+// and lib/auth/rate-limit.ts are made properly venue-aware, per the SaaS
+// architecture plan) must, in order:
+//   1. Make venueId NOT NULL on Booking/SlotRule/Blackout/Payment.
+//   2. DROP INDEX one_live_booking_per_slot; DROP the plain SlotRule/
+//      Blackout unique constraints.
+//   3. CREATE UNIQUE INDEX one_live_booking_per_slot
+//      ON "Booking" ("venueId", date, "slotIndex")
+//      WHERE status IN ('HELD','CONFIRMED','COMPLETED','PENDING_VERIFICATION');
+//      and the equivalent (venueId, dayOfWeek, slotIndex) / (venueId, date,
+//      slotIndex) unique constraints on SlotRule/Blackout.
+// This again cannot be one transaction with anything that adds a new enum
+// value, per the note above — but nothing in THIS pass adds one, so that
+// constraint doesn't apply to Phase 0 itself, only to whatever migration
+// eventually does both at once.
+//
+// VenueSetting itself is retired in a FOLLOW-UP migration within this same
+// pass (not this one) — its one existing row is read by
+// scripts/backfill-tenant-zero.ts to create "Venue Zero" BEFORE the table
+// is dropped, then a second migration drops it. Two migrations, in that
+// order, for the same "don't destroy data you haven't copied yet" reason
+// as every other multi-step migration in this file — not the enum-in-
+// transaction reason.
 // ================================================================

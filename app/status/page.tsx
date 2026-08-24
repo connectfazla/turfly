@@ -14,6 +14,7 @@
  * meant to stay public.
  */
 import { prisma } from '@/lib/prisma';
+import { DEFAULT_VENUE_SLUG } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,10 +62,14 @@ export default async function StatusPage() {
 
   let venueCheck: { ok: true; venueName: string } | { ok: false; message: string };
   try {
-    const venue = await prisma.venueSetting.findUnique({ where: { id: 'singleton' } });
+    const venue = await prisma.venue.findUnique({ where: { slug: DEFAULT_VENUE_SLUG } });
     venueCheck = venue
-      ? { ok: true, venueName: venue.venueName }
-      : { ok: false, message: 'Connected fine, but no VenueSetting row exists — did the seed script run against this database?' };
+      ? { ok: true, venueName: venue.name }
+      : {
+          ok: false,
+          message:
+            'Connected fine, but no Venue row exists — did scripts/backfill-tenant-zero.ts run against this database?',
+        };
   } catch (err) {
     venueCheck = { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
@@ -100,7 +105,7 @@ export default async function StatusPage() {
         </pre>
       )}
 
-      <h2 style={{ marginTop: 24 }}>VenueSetting read (what the homepage actually does)</h2>
+      <h2 style={{ marginTop: 24 }}>Venue read (what the homepage actually does)</h2>
       {venueCheck.ok ? (
         <p style={{ color: '#15803d' }}>OK — found &quot;{venueCheck.venueName}&quot;.</p>
       ) : (

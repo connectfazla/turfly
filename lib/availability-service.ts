@@ -14,6 +14,7 @@ import {
   type AvailabilitySlotRule,
 } from './availability';
 import type { SlotView } from './slots';
+import { getDefaultVenueId } from './tenant';
 
 /** Accepts either the top-level Prisma client or a transaction client, so
  * the booking engine can call this from inside a transaction and everyone
@@ -46,27 +47,43 @@ export function dateOnly(d: Date): Date {
   return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
 }
 
-/** `excludeBookingId` leaves one booking out of the "booked" check - used
+/**
+ * `excludeBookingId` leaves one booking out of the "booked" check - used
  * by rescheduleBooking() so a booking never counts as blocking its own
- * old slot when checking whether its new slot is free. */
+ * old slot when checking whether its new slot is free.
+ *
+ * `venueId` is a trailing optional parameter (not folded into an options
+ * object) SPECIFICALLY so every existing call site - lib/booking-engine.ts
+ * included - keeps compiling and behaving identically without being
+ * touched in this pass: omitted, it resolves to lib/tenant.ts's
+ * getDefaultVenueId() ("Venue Zero"), the only venue that exists right
+ * now, so filtering by it changes no query result today. A later pass
+ * (once booking-engine.ts's callers can pass a real venueId) is expected
+ * to clean this up into a proper options object - CLAUDE.md §4 still
+ * applies either way: this stays the ONE function that computes
+ * availability, never a second implementation.
+ */
 export async function fetchDayAvailability(
   db: DbClient,
   date: Date,
   now: Date,
   excludeBookingId?: string,
+  venueId?: string,
 ): Promise<DayAvailabilityResult> {
   const day = dateOnly(date);
   const dayOfWeek = day.getDay();
+  const resolvedVenueId = venueId ?? (await getDefaultVenueId());
 
   const [slotRules, bookings, blackouts] = await Promise.all([
-    db.slotRule.findMany({ where: { dayOfWeek } }),
+    db.slotRule.findMany({ where: { dayOfWeek, venueId: resolvedVenueId } }),
     db.booking.findMany({
       where: {
         date: day,
+        venueId: resolvedVenueId,
         id: excludeBookingId ? { not: excludeBookingId } : undefined,
       },
     }),
-    db.blackout.findMany({ where: { date: day } }),
+    db.blackout.findMany({ where: { date: day, venueId: resolvedVenueId } }),
   ]);
 
   const availabilitySlotRules: AvailabilitySlotRule[] = slotRules.map((r) => ({

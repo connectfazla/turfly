@@ -18,6 +18,7 @@ import { ConfirmForm } from '@/components/booking/confirm-form';
 import { prisma } from '@/lib/prisma';
 import { formatBDT, formatDateLong } from '@/lib/format';
 import { slotLabel, type SlotIndex } from '@/lib/slots';
+import { getDefaultVenueId } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,10 +33,13 @@ export default async function ConfirmPage({ searchParams }: Props) {
     redirect('/book');
   }
 
-  const [booking, venue] = await Promise.all([
-    prisma.booking.findUnique({ where: { id: holdId } }),
-    prisma.venueSetting.findUnique({ where: { id: 'singleton' } }),
-  ]);
+  const booking = await prisma.booking.findUnique({ where: { id: holdId } });
+  // VenueSetting is retired — read the Venue this hold actually belongs
+  // to (falling back to the one default venue if the hold predates the
+  // multi-tenant conversion, or has none for any other reason).
+  const venue = await prisma.venue.findUnique({
+    where: { id: booking?.venueId ?? (await getDefaultVenueId()) },
+  });
   const now = new Date();
   const isValidHold = !!(
     booking &&
@@ -72,7 +76,7 @@ export default async function ConfirmPage({ searchParams }: Props) {
               holdExpiresAt={booking.holdExpiresAt!.toISOString()}
               priceAmount={booking.priceAmount.toString()}
               bkashNumber={venue?.bkashNumber ?? ''}
-              advanceAmount={Number(venue?.advanceAmount ?? 1000)}
+              depositAmount={Math.round((Number(booking.priceAmount) * (venue?.depositPercent ?? 30)) / 100)}
             />
           </>
         )}

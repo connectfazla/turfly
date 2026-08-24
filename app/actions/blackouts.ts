@@ -15,6 +15,7 @@ import { requireRole } from '@/lib/auth/require-role';
 import { parseDateParam } from '@/lib/format';
 import { slotLabel, type SlotIndex } from '@/lib/slots';
 import { createBlackoutSchema, deleteBlackoutSchema, type CreateBlackoutFormInput } from '@/lib/schemas/admin';
+import { getDefaultVenueId } from '@/lib/tenant';
 import type { ActionResult } from './bookings';
 
 /** Maps any thrown error into a safe, user-facing ActionResult. */
@@ -85,9 +86,15 @@ export async function createBlackoutAction(
     if (!date) throw new Error('Invalid date');
     const day = dateOnly(date);
 
+    // Multi-tenant conversion, Phase 0: hardcoded to the one venue that
+    // exists today — see lib/tenant.ts's doc comment. Blackout.venueId is
+    // filtered on by fetchDayAvailability, so this must be set for a new
+    // blackout to actually take effect.
+    const venueId = await getDefaultVenueId();
+
     const blackout = await prisma.$transaction(async (tx) => {
       const created = await tx.blackout.create({
-        data: { date: day, slotIndex: parsed.slotIndex, reason: parsed.reason, createdById: staff.id },
+        data: { date: day, slotIndex: parsed.slotIndex, reason: parsed.reason, createdById: staff.id, venueId },
       });
       await tx.auditLog.create({
         data: {
@@ -95,6 +102,7 @@ export async function createBlackoutAction(
           action: 'BLACKOUT_CREATED',
           entityType: 'Blackout',
           entityId: created.id,
+          venueId,
           after: created as unknown as Prisma.InputJsonValue,
         },
       });

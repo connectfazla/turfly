@@ -48,26 +48,27 @@ export function PaymentSettingsForm({ current }: { current: PaymentSettingsFormI
           <p className="text-caption text-danger">{form.formState.errors.bkashNumber.message}</p>
         ) : (
           <p className="text-caption text-text-muted">
-            Shown to customers on /book/confirm as the number to send the advance to.
+            Shown to customers on /book/confirm as the number to send the deposit to.
           </p>
         )}
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="advanceAmount">Advance amount</Label>
+        <Label htmlFor="depositPercent">Deposit percentage</Label>
         <div className="flex items-center gap-2">
           <Input
-            id="advanceAmount"
+            id="depositPercent"
             type="number"
             step="1"
             min="1"
+            max="100"
             className="w-32 rounded-(--radius-input)"
-            {...form.register('advanceAmount')}
+            {...form.register('depositPercent')}
           />
-          <span className="text-caption text-text-muted">BDT</span>
+          <span className="text-caption text-text-muted">% of each booking's price</span>
         </div>
-        {form.formState.errors.advanceAmount ? (
-          <p className="text-caption text-danger">{form.formState.errors.advanceAmount.message}</p>
+        {form.formState.errors.depositPercent ? (
+          <p className="text-caption text-danger">{form.formState.errors.depositPercent.message}</p>
         ) : null}
       </div>
 

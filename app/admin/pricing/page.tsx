@@ -14,6 +14,7 @@ import { prisma } from '@/lib/prisma';
 import { NOON_SLOT_INDEXES, PEAK_SLOT_INDEXES } from '@/lib/slots';
 import { PricingForm } from '@/components/admin/pricing-form';
 import { PaymentSettingsForm } from '@/components/admin/payment-settings-form';
+import { getDefaultVenueId } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +27,7 @@ export default async function AdminPricingPage() {
     prisma.slotRule.findFirst({ where: { dayOfWeek: 5, slotIndex: AFTERNOON_SAMPLE_SLOT } }),
     prisma.slotRule.findFirst({ where: { dayOfWeek: 1, slotIndex: PEAK_SLOT_INDEXES[0] } }),
     prisma.slotRule.findFirst({ where: { dayOfWeek: 5, slotIndex: PEAK_SLOT_INDEXES[0] } }),
-    prisma.venueSetting.findUnique({ where: { id: 'singleton' } }),
+    prisma.venue.findUnique({ where: { id: await getDefaultVenueId() } }),
   ]);
 
   return (
@@ -52,14 +53,14 @@ export default async function AdminPricingPage() {
       <div className="border-t border-border pt-8">
         <h2 className="text-heading text-text">Payment settings</h2>
         <p className="mt-1 text-body text-text-muted">
-          The bKash number customers send the advance to, how much that advance is, and how long an
-          unverified claim holds its slot before it auto-releases.
+          The bKash number customers send the deposit to, what percentage of the price that deposit is, and
+          how long an unverified claim holds its slot before it auto-releases.
         </p>
         <div className="mt-6">
           <PaymentSettingsForm
             current={{
               bkashNumber: venue?.bkashNumber ?? '',
-              advanceAmount: Number(venue?.advanceAmount ?? 1000),
+              depositPercent: venue?.depositPercent ?? 30,
               paymentVerificationHours: venue?.paymentVerificationHours ?? 24,
             }}
           />

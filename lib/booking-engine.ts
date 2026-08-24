@@ -19,6 +19,7 @@ import { Prisma, type Booking, type BookingSource, type PaymentMethod } from '@p
 import { prisma } from './prisma';
 import { dateOnly, fetchDayAvailability } from './availability-service';
 import { assertValidSlotIndex, hasSlotStarted, slotEnd, slotStart, type SlotIndex, type SlotView } from './slots';
+import { getDefaultVenueId } from './tenant';
 
 type Tx = Prisma.TransactionClient;
 
@@ -113,7 +114,23 @@ function isPrismaKnownError(err: unknown, code: string): boolean {
 async function runSerializable<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      return await prisma.$transaction(fn, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      return await prisma.$transaction(fn, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        // Prisma's default is 5000ms, which this codebase's Neon compute
+        // + per-query round-trip latency can exceed on the longer write
+        // paths here (holdSlot alone is 7-8 sequential queries) - the
+        // engine then closes the transaction mid-flight and whatever
+        // query is next in line fails with P2028 "Transaction not
+        // found," non-deterministically depending on exact timing.
+        // Confirmed by reproducing outside Next.js entirely (plain tsx),
+        // so this is a genuine timeout-vs-latency issue, not a
+        // Turbopack/dev-server artifact - widened rather than trimming
+        // queries, since correctness here (CLAUDE.md §4's "the ONE
+        // availability function," the venue-scoped writes) matters more
+        // than shaving round trips.
+        timeout: 15_000,
+        maxWait: 5_000,
+      });
     } catch (err) {
       if (isPrismaKnownError(err, PRISMA_UNIQUE_VIOLATION)) {
         throw new SlotTakenError();
@@ -162,7 +179,7 @@ function assertSlotBookable(slot: SlotView): void {
  * transaction as the write that follows it. The PENDING_VERIFICATION leg
  * is the failsafe for a customer who submitted a fake/never-arriving
  * bKash TRXN and staff never acted on it — after
- * VenueSetting.paymentVerificationHours the slot frees itself instead of
+ * Venue.paymentVerificationHours the slot frees itself instead of
  * being locked forever. */
 async function sweepExpiredHolds(tx: Tx, now: Date): Promise<void> {
   await tx.booking.updateMany({
@@ -289,10 +306,16 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
   const now = input.now ?? new Date();
   const slotIndex = input.slotIndex as SlotIndex;
 
+  // Multi-tenant conversion, Phase 0: hardcoded to the one venue that
+  // exists today ("Venue Zero") — see lib/tenant.ts's doc comment. Not a
+  // real per-request venue resolution yet; that's a later pass, once
+  // callers of this function can supply a real venueId themselves.
+  const venueId = await getDefaultVenueId();
+
   return runSerializable(async (tx) => {
     await sweepExpiredHolds(tx, now);
 
-    const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now);
+    const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now, undefined, venueId);
     const slot = slots.find((s) => s.index === slotIndex)!;
     assertSlotBookable(slot);
 
@@ -300,6 +323,8 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
     const reference = await nextReference(tx, now);
     const holdExpiresAt = new Date(now.getTime() + HOLD_MINUTES * 60_000);
     const price = ruleByIndex.get(slotIndex)!.price;
+
+    const venue = await tx.venue.findUniqueOrThrow({ where: { id: venueId }, select: { tenantId: true } });
 
     const booking = await tx.booking.create({
       data: {
@@ -311,6 +336,8 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
         holdExpiresAt,
         priceAmount: price,
         source: 'ONLINE',
+        venueId,
+        tenantId: venue.tenantId,
       },
     });
 
@@ -444,9 +471,18 @@ async function confirmHeldBooking(
     },
   });
 
-  const venue = await tx.venueSetting.findUnique({ where: { id: 'singleton' } });
+  // VenueSetting is retired as of the multi-tenant conversion (its fields
+  // moved onto Venue — see prisma/schema.prisma's bottom note); read the
+  // venue this booking actually belongs to (set at hold time by
+  // holdSlot()) rather than a hardcoded singleton. depositPercent
+  // replaces the old fixed advanceAmount BDT figure — the deposit is now
+  // computed as a percentage of THIS booking's own price, same rounding
+  // approach the SaaS architecture plan specifies for the later
+  // Booking.depositAmount snapshot field.
+  const venueId = held.venueId ?? (await getDefaultVenueId());
+  const venue = await tx.venue.findUnique({ where: { id: venueId } });
   const verificationHours = venue?.paymentVerificationHours ?? 24;
-  const advanceAmount = venue ? Number(venue.advanceAmount) : 1000;
+  const depositAmount = Math.round((Number(held.priceAmount) * (venue?.depositPercent ?? 30)) / 100);
   const paymentVerificationExpiresAt = new Date(now.getTime() + verificationHours * 3_600_000);
 
   const booking = await tx.booking.update({
@@ -462,7 +498,8 @@ async function confirmHeldBooking(
   await tx.payment.create({
     data: {
       bookingId: booking.id,
-      amount: advanceAmount,
+      venueId,
+      amount: depositAmount,
       method: 'BKASH',
       status: 'PENDING',
       trxId: input.trxId,
@@ -485,7 +522,10 @@ async function createFreshConfirmedBooking(
   slotIndex: SlotIndex,
   source: BookingSource,
 ): Promise<Booking> {
-  const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now);
+  // Multi-tenant conversion, Phase 0: hardcoded to the one venue that
+  // exists today — see lib/tenant.ts's doc comment.
+  const venueId = await getDefaultVenueId();
+  const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now, undefined, venueId);
   const slot = slots.find((s) => s.index === slotIndex)!;
   assertSlotBookable(slot);
 
@@ -508,6 +548,7 @@ async function createFreshConfirmedBooking(
 
   const reference = await nextReference(tx, now);
   const price = input.priceOverride ?? ruleByIndex.get(slotIndex)!.price;
+  const venue = await tx.venue.findUniqueOrThrow({ where: { id: venueId }, select: { tenantId: true } });
 
   const booking = await tx.booking.create({
     data: {
@@ -520,6 +561,8 @@ async function createFreshConfirmedBooking(
       source,
       createdById: input.createdById ?? null,
       customerNote: input.note ?? null,
+      venueId,
+      tenantId: venue.tenantId,
     },
   });
 
@@ -743,6 +786,7 @@ export async function recordPayment(input: RecordPaymentInput): Promise<Booking>
     await tx.payment.create({
       data: {
         bookingId: booking.id,
+        venueId: booking.venueId,
         amount: input.amount,
         method: input.method,
         receivedById: input.staffUserId,

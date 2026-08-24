@@ -1,7 +1,14 @@
 /**
  * Seeds: 112 SlotRule rows (7 days × 16 slots, slotIndex 4 unbookable on
- * every day), one ADMIN user, one MODERATOR user, a VenueSetting singleton,
- * and default pricing. Idempotent — safe to re-run.
+ * every day, with default pricing), one ADMIN user, one MODERATOR user.
+ * Idempotent — safe to re-run.
+ *
+ * Does NOT create a Venue (that was VenueSetting's job pre-multi-tenant —
+ * see prisma/schema.prisma's bottom note). On a fresh database, run
+ * `tsx scripts/backfill-tenant-zero.ts` AFTER this script: it creates
+ * "Venue Zero" and backfills venueId onto every SlotRule row this script
+ * just created (and any Booking/Blackout/Payment/AuditLog rows, though a
+ * fresh DB has none of those yet).
  */
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
@@ -66,32 +73,11 @@ async function seedUsers() {
   }
 }
 
-async function seedVenueSetting() {
-  await prisma.venueSetting.upsert({
-    where: { id: 'singleton' },
-    update: {},
-    create: {
-      id: 'singleton',
-      venueName: 'Turfly',
-      contactPhone: '+8801700000000',
-      contactEmail: 'hello@turfly.example',
-      rulesText:
-        'One 90-minute slot per booking. Please arrive 10 minutes early. ' +
-        'Cancellations are free up to 6 hours before your slot.',
-      holdMinutes: Number(process.env.HOLD_MINUTES ?? 10),
-      cancellationWindowHours: Number(process.env.CANCELLATION_WINDOW_HOURS ?? 6),
-      bookingWindowDays: Number(process.env.BOOKING_WINDOW_DAYS ?? 14),
-    },
-  });
-  console.log('  VenueSetting: singleton row ready');
-}
-
 async function main() {
   console.log('Seeding...');
   await seedSlotRules();
   await seedUsers();
-  await seedVenueSetting();
-  console.log('Done.');
+  console.log('Done. Run `tsx scripts/backfill-tenant-zero.ts` next to create the default Venue.');
 }
 
 main()

@@ -19,6 +19,7 @@ import { RecordPaymentForm } from '@/components/admin/record-payment-form';
 import { RescheduleForm } from '@/components/admin/reschedule-form';
 import { InternalNoteForm } from '@/components/admin/internal-note-form';
 import { VerifyPaymentForm } from '@/components/admin/verify-payment-form';
+import { getDefaultVenueId } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +34,7 @@ export default async function AdminBookingDetailPage({ params }: Props) {
       where: { id },
       include: { customer: true, payments: { orderBy: { receivedAt: 'desc' } }, createdBy: true },
     }),
-    prisma.venueSetting.findUnique({ where: { id: 'singleton' } }),
+    prisma.venue.findUnique({ where: { id: await getDefaultVenueId() } }),
   ]);
   if (!booking) notFound();
 

@@ -126,7 +126,7 @@ export const paymentSettingsSchema = z.object({
     .string()
     .trim()
     .regex(/^(?:\+?880|0)1[3-9]\d{8}$/, 'Enter a valid Bangladeshi mobile number, e.g. 01712345678'),
-  advanceAmount: z.coerce.number().positive('Enter an amount greater than zero'),
+  depositPercent: z.coerce.number().int().min(1).max(100, 'Enter a percentage between 1 and 100'),
   paymentVerificationHours: z.coerce.number().int().min(1).max(168, 'Must be 168 hours (1 week) or less'),
 });
 export type PaymentSettingsFormInput = z.input<typeof paymentSettingsSchema>;

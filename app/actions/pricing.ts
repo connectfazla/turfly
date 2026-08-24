@@ -18,6 +18,7 @@ import {
   type PricingFormInput,
 } from '@/lib/schemas/admin';
 import { MAINTENANCE_SLOT, NOON_SLOT_INDEXES, PEAK_SLOT_INDEXES, ALL_SLOT_INDEXES } from '@/lib/slots';
+import { getDefaultVenueId } from '@/lib/tenant';
 import { WEEKDAY_DAYS_OF_WEEK, WEEKEND_DAYS_OF_WEEK } from '@/lib/pricing';
 import type { ActionResult } from './bookings';
 
@@ -90,24 +91,27 @@ export async function updatePricingAction(input: PricingFormInput): Promise<Acti
   }
 }
 
-/** Updates the bKash wallet number customers pay the advance to, the
- * advance amount, and the auto-expiry window for unverified claims — all
- * on the VenueSetting singleton, never hard-coded in source (CLAUDE.md
- * §8: "no secrets in code"). */
+/** Updates the bKash wallet number customers pay the deposit to, the
+ * deposit percentage, and the auto-expiry window for unverified claims —
+ * all on the Venue row (VenueSetting's replacement — see
+ * prisma/schema.prisma), never hard-coded in source (CLAUDE.md §8: "no
+ * secrets in code"). Hardcoded to the one default venue for now — see
+ * lib/tenant.ts's doc comment. */
 export async function updatePaymentSettingsAction(
   input: PaymentSettingsFormInput,
 ): Promise<ActionResult<{ ok: true }>> {
   try {
     const staff = await requireRole('ADMIN');
     const parsed = paymentSettingsSchema.parse(input);
+    const venueId = await getDefaultVenueId();
 
     await prisma.$transaction(async (tx) => {
-      const before = await tx.venueSetting.findUnique({ where: { id: 'singleton' } });
-      await tx.venueSetting.update({
-        where: { id: 'singleton' },
+      const before = await tx.venue.findUnique({ where: { id: venueId } });
+      await tx.venue.update({
+        where: { id: venueId },
         data: {
           bkashNumber: parsed.bkashNumber,
-          advanceAmount: parsed.advanceAmount,
+          depositPercent: parsed.depositPercent,
           paymentVerificationHours: parsed.paymentVerificationHours,
         },
       });
@@ -115,8 +119,9 @@ export async function updatePaymentSettingsAction(
         data: {
           actorId: staff.id,
           action: 'PAYMENT_SETTINGS_UPDATED',
-          entityType: 'VenueSetting',
-          entityId: 'singleton',
+          entityType: 'Venue',
+          entityId: venueId,
+          venueId,
           before: before ? (before as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
           after: parsed as unknown as Prisma.InputJsonValue,
         },
