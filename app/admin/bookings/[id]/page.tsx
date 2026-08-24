@@ -18,6 +18,7 @@ import { BookingActions } from '@/components/admin/booking-actions';
 import { RecordPaymentForm } from '@/components/admin/record-payment-form';
 import { RescheduleForm } from '@/components/admin/reschedule-form';
 import { InternalNoteForm } from '@/components/admin/internal-note-form';
+import { VerifyPaymentForm } from '@/components/admin/verify-payment-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,14 +28,21 @@ interface Props {
 
 export default async function AdminBookingDetailPage({ params }: Props) {
   const { id } = await params;
-  const booking = await prisma.booking.findUnique({
-    where: { id },
-    include: { customer: true, payments: { orderBy: { receivedAt: 'desc' } }, createdBy: true },
-  });
+  const [booking, venue] = await Promise.all([
+    prisma.booking.findUnique({
+      where: { id },
+      include: { customer: true, payments: { orderBy: { receivedAt: 'desc' } }, createdBy: true },
+    }),
+    prisma.venueSetting.findUnique({ where: { id: 'singleton' } }),
+  ]);
   if (!booking) notFound();
 
   const slotHasStarted = hasSlotStarted(booking.date, booking.slotIndex as SlotIndex, new Date());
   const balance = Number(booking.priceAmount) - Number(booking.amountPaid);
+  const pendingClaim =
+    booking.status === 'PENDING_VERIFICATION'
+      ? booking.payments.find((p) => p.status === 'PENDING')
+      : undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -56,6 +64,23 @@ export default async function AdminBookingDetailPage({ params }: Props) {
         slotHasStarted={slotHasStarted}
       />
 
+      {pendingClaim ? (
+        <Card className="rounded-(--radius-card) border-warning/30">
+          <CardHeader>
+            <CardTitle className="text-heading text-text">Verify payment</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <VerifyPaymentForm
+              bookingId={booking.id}
+              reference={booking.reference}
+              trxId={pendingClaim.trxId ?? ''}
+              amount={pendingClaim.amount.toString()}
+              bkashNumber={venue?.bkashNumber ?? ''}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card className="rounded-(--radius-card)">
         <CardHeader>
           <CardTitle className="text-heading text-text">Customer</CardTitle>
@@ -73,6 +98,12 @@ export default async function AdminBookingDetailPage({ params }: Props) {
             <div className="flex justify-between">
               <span className="text-text-muted">Email</span>
               <span>{booking.customer.email}</span>
+            </div>
+          ) : null}
+          {booking.customer.address ? (
+            <div className="flex justify-between gap-4">
+              <span className="shrink-0 text-text-muted">Address</span>
+              <span className="text-right">{booking.customer.address}</span>
             </div>
           ) : null}
           {booking.customer.teamName ? (
@@ -120,7 +151,9 @@ export default async function AdminBookingDetailPage({ params }: Props) {
               {booking.payments.map((p) => (
                 <li key={p.id} className="flex justify-between tabular-nums">
                   <span>
-                    {p.method.replace('_', ' ')} {p.note ? `(${p.note})` : ''}
+                    {p.method.replace('_', ' ')}
+                    {p.status !== 'VERIFIED' ? ` (${p.status.toLowerCase()})` : ''}
+                    {p.note ? ` (${p.note})` : ''}
                   </span>
                   <span>{formatBDT(p.amount.toString())}</span>
                 </li>
@@ -128,7 +161,7 @@ export default async function AdminBookingDetailPage({ params }: Props) {
             </ul>
           ) : null}
 
-          {booking.status !== 'CANCELLED' ? (
+          {booking.status !== 'CANCELLED' && booking.status !== 'PENDING_VERIFICATION' ? (
             <div className="border-t border-border pt-3">
               <RecordPaymentForm bookingId={booking.id} />
             </div>

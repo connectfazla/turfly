@@ -9,6 +9,13 @@ import { z } from 'zod';
 const DATE_PARAM_RE = /^\d{4}-\d{2}-\d{2}$/;
 const BD_PHONE_RE = /^(?:\+?880|0)1[3-9]\d{8}$/;
 const REFERENCE_RE = /^TRF-\d{4}-\d{4}$/;
+/** bKash TRXN IDs are 10 uppercase-alphanumeric characters in practice
+ * (e.g. "8N7A1B2C3D"), but bKash doesn't publish a formal spec and the
+ * format has drifted before — validated loosely (6-20 chars) rather than
+ * to an exact length so a legitimate TRXN is never rejected by a regex
+ * that's stricter than reality. Staff do the real check by hand against
+ * their bKash statement; this only guards against empty/garbage input. */
+const BKASH_TRXN_RE = /^[A-Z0-9]{6,20}$/;
 
 /** "01712345678" / "+8801712345678" / "8801712345678" -> "+8801712345678".
  * Keeps one Customer row per person regardless of how they typed it. */
@@ -57,11 +64,22 @@ export const holdSlotSchema = z.object({
 export type HoldSlotFormInput = z.input<typeof holdSlotSchema>;
 export type HoldSlotFormOutput = z.output<typeof holdSlotSchema>;
 
+/** Full name and phone are already required at hold time (holdSlotSchema).
+ * Email, address and the bKash advance TRXN are required HERE, at confirm
+ * time — moving a HELD row to PENDING_VERIFICATION without all three
+ * means the customer record and payment claim are unusable to staff. */
 export const confirmBookingSchema = z.object({
   holdId: z.string().min(1, 'Missing hold'),
   date: dateParamSchema,
   slotIndex: slotIndexSchema,
-  email: z.string().trim().email('Enter a valid email').optional().or(z.literal('')).transform((v) => (v ? v : undefined)),
+  email: z.string().trim().min(1, 'Enter your email').email('Enter a valid email'),
+  address: z.string().trim().min(5, 'Enter your address').max(300, 'Address is too long'),
+  trxId: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .min(1, 'Enter the bKash transaction ID')
+    .regex(BKASH_TRXN_RE, 'Enter a valid bKash transaction ID, e.g. 8N7A1B2C3D'),
   teamName: optionalText(80),
   note: optionalText(300),
 });

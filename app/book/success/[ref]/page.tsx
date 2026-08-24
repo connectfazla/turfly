@@ -2,10 +2,14 @@
  * ROUTE: /book/success/[ref] — public, no login (ref is the booking
  * reference, e.g. TRF-2026-0001).
  *
- * The receipt shown right after confirmation. Only ever renders for a
- * CONFIRMED booking - a HELD, cancelled, or nonexistent reference 404s,
- * since this page is a one-time confirmation, not a general booking
- * viewer (that's /booking/lookup, which requires the phone number too).
+ * The receipt shown right after the confirm form is submitted. Renders
+ * for PENDING_VERIFICATION (the normal case now — the booking is not
+ * CONFIRMED yet, staff still have to verify the bKash advance) and for
+ * CONFIRMED (a counter booking, or a rare same-second race where staff
+ * already verified it). A HELD, cancelled, or nonexistent reference
+ * 404s, since this page is a one-time landing after submission, not a
+ * general booking viewer (that's /booking/lookup, which requires the
+ * phone number too).
  */
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
@@ -26,18 +30,27 @@ interface Props {
 export default async function BookingSuccessPage({ params }: Props) {
   const { ref } = await params;
 
-  // Only CONFIRMED bookings render a receipt — a reference that is still
-  // HELD, or belongs to someone else's expired/cancelled attempt, is not a
-  // real confirmation to show.
+  // Only PENDING_VERIFICATION or CONFIRMED bookings render a receipt — a
+  // reference that is still HELD, or belongs to someone else's expired/
+  // cancelled attempt, is not a real submission to show.
   const booking = await prisma.booking.findUnique({ where: { reference: ref } });
-  if (!booking || booking.status !== 'CONFIRMED') notFound();
+  if (!booking || (booking.status !== 'PENDING_VERIFICATION' && booking.status !== 'CONFIRMED')) notFound();
+  const pending = booking.status === 'PENDING_VERIFICATION';
 
   return (
     <div className="flex min-h-dvh flex-col">
       <SiteHeader />
       <main className="mx-auto w-full max-w-[560px] flex-1 px-4 py-8">
-        <div className="mb-6 rounded-(--radius-card) border border-accent/30 bg-accent-soft px-4 py-3 text-body font-medium text-accent">
-          Booking confirmed
+        <div
+          className={
+            pending
+              ? 'mb-6 rounded-(--radius-card) border border-warning/30 bg-surface-muted px-4 py-3 text-body font-medium text-warning'
+              : 'mb-6 rounded-(--radius-card) border border-accent/30 bg-accent-soft px-4 py-3 text-body font-medium text-accent'
+          }
+        >
+          {pending
+            ? "Reserved — verifying your payment. We'll confirm once staff check your bKash TRXN."
+            : 'Booking confirmed'}
         </div>
 
         <Card className="rounded-(--radius-card)">

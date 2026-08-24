@@ -78,6 +78,7 @@ export async function fetchDayAvailability(
     slotIndex: b.slotIndex,
     status: b.status,
     holdExpiresAt: b.holdExpiresAt,
+    paymentVerificationExpiresAt: b.paymentVerificationExpiresAt,
   }));
   const availabilityBlackouts: AvailabilityBlackout[] = blackouts.map((b) => ({
     slotIndex: b.slotIndex,

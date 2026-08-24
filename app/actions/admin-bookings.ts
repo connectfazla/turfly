@@ -15,8 +15,10 @@ import {
   createBooking,
   markNoShow,
   recordPayment,
+  rejectPaymentClaim,
   rescheduleBooking,
   updateBookingNote,
+  verifyPaymentClaim,
 } from '@/lib/booking-engine';
 import { requireRole } from '@/lib/auth/require-role';
 import { prisma } from '@/lib/prisma';
@@ -27,12 +29,19 @@ import {
   counterBookingSchema,
   markNoShowSchema,
   recordPaymentSchema,
+  rejectPaymentSchema,
   rescheduleStaffSchema,
   updateNoteSchema,
+  verifyPaymentSchema,
   type CounterBookingFormInput,
   type RecordPaymentFormInput,
+  type RejectPaymentFormInput,
 } from '@/lib/schemas/admin';
-import { notifyBookingCancelled, notifyBookingConfirmed, notifyBookingRescheduled } from '@/lib/notify';
+import {
+  notifyBookingCancelled,
+  notifyBookingConfirmed,
+  notifyBookingRescheduled,
+} from '@/lib/notify';
 import type { ActionResult } from './bookings';
 
 /** Maps any error thrown by requireRole(), a Zod schema, or the booking
@@ -61,7 +70,12 @@ function badDate(raw: string) {
 }
 
 /** Staff counter booking: goes straight to CONFIRMED, source COUNTER,
- * skips the public 2-active-booking limit (CLAUDE.md §2 invariant 6). */
+ * skips the public 2-active-booking limit (CLAUDE.md §2 invariant 6).
+ * Staff choose cash or bKash right on this form (paymentMethod) — if they
+ * also enter amountReceived, a Payment row is recorded in the same
+ * action, VERIFIED by default (this is staff physically taking the
+ * money, or reading their own bKash notification, right now — nothing
+ * left to verify, unlike the public advance-payment claim flow). */
 export async function createCounterBookingAction(
   input: CounterBookingFormInput,
 ): Promise<ActionResult<{ reference: string }>> {
@@ -74,12 +88,22 @@ export async function createCounterBookingAction(
       phone: parsed.phone,
       fullName: parsed.fullName,
       email: parsed.email,
+      address: parsed.address,
       teamName: parsed.teamName,
       note: parsed.note,
       source: 'COUNTER',
       createdById: staff.id,
       priceOverride: parsed.priceOverride,
     });
+    if (parsed.amountReceived) {
+      await recordPayment({
+        bookingId: booking.id,
+        amount: parsed.amountReceived,
+        method: parsed.paymentMethod,
+        staffUserId: staff.id,
+        note: 'Recorded at counter booking creation',
+      });
+    }
     void notifyBookingConfirmed(booking.id);
     revalidatePath('/admin');
     revalidatePath('/admin/bookings');
@@ -192,6 +216,48 @@ export async function recordPaymentAction(input: RecordPaymentFormInput): Promis
     });
     revalidatePath(`/admin/bookings/${booking.id}`);
     return { ok: true, data: { paymentStatus: booking.paymentStatus } };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** PENDING_VERIFICATION -> CONFIRMED. Staff checked their bKash statement
+ * and the customer's submitted TRXN really is there — this is the ONLY
+ * place a public online booking becomes CONFIRMED (CLAUDE.md's payment-
+ * verification invariant: "confirm only after receiving the advance").
+ * notifyBookingConfirmed fires HERE, not at submission time. */
+export async function verifyPaymentAction(input: { bookingId: string }): Promise<ActionResult<{ status: string }>> {
+  try {
+    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const parsed = verifyPaymentSchema.parse(input);
+    const booking = await verifyPaymentClaim({ bookingId: parsed.bookingId, staffUserId: staff.id });
+    void notifyBookingConfirmed(booking.id);
+    revalidatePath('/admin');
+    revalidatePath('/admin/bookings');
+    revalidatePath(`/admin/bookings/${booking.id}`);
+    return { ok: true, data: { status: booking.status } };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** PENDING_VERIFICATION -> CANCELLED. The submitted TRXN didn't check out
+ * (never arrived, wrong amount, doesn't exist) — releases the slot
+ * immediately instead of waiting for the auto-expiry deadline. */
+export async function rejectPaymentAction(input: RejectPaymentFormInput): Promise<ActionResult<{ status: string }>> {
+  try {
+    const staff = await requireRole('ADMIN', 'MODERATOR');
+    const parsed = rejectPaymentSchema.parse(input);
+    const booking = await rejectPaymentClaim({
+      bookingId: parsed.bookingId,
+      staffUserId: staff.id,
+      reason: parsed.reason,
+    });
+    void notifyBookingCancelled(booking.id);
+    revalidatePath('/admin');
+    revalidatePath('/admin/bookings');
+    revalidatePath(`/admin/bookings/${booking.id}`);
+    return { ok: true, data: { status: booking.status } };
   } catch (err) {
     return fail(err);
   }

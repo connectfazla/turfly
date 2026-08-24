@@ -131,11 +131,22 @@ export const BOOKABLE_SLOT_INDEXES: readonly SlotIndex[] = Object.freeze(
 
 // ---------------------------------------------------------------- pricing helper
 
-/** Evening peak window: 16:30, 18:00, 19:30, 21:00. */
+/** Evening peak window: 16:30, 18:00, 19:30, 21:00. The "night" price tier. */
 export const PEAK_SLOT_INDEXES: readonly SlotIndex[] = Object.freeze([11, 12, 13, 14]);
 
 export function isPeakSlot(index: SlotIndex): boolean {
   return PEAK_SLOT_INDEXES.includes(index);
+}
+
+/** Midday window: 09:00, 10:30, 12:00, 13:30 (slot start times) — i.e.
+ * 09:00–15:00. The cheapest "noon" price tier, same price every day of
+ * the week (see lib/pricing.ts). Every other bookable, non-peak slot
+ * (very early morning + late evening/night) falls into the remaining
+ * "afternoon" tier, priced per weekday/weekend like the peak tier. */
+export const NOON_SLOT_INDEXES: readonly SlotIndex[] = Object.freeze([6, 7, 8, 9]);
+
+export function isNoonSlot(index: SlotIndex): boolean {
+  return NOON_SLOT_INDEXES.includes(index);
 }
 
 /** Friday and Saturday are the Bangladesh weekend, not Saturday/Sunday. */

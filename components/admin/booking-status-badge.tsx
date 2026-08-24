@@ -4,6 +4,7 @@ import type { BookingStatus } from '@prisma/client';
 
 const LABEL: Record<BookingStatus, string> = {
   HELD: 'Held',
+  PENDING_VERIFICATION: 'Awaiting payment',
   CONFIRMED: 'Confirmed',
   COMPLETED: 'Completed',
   CANCELLED: 'Cancelled',
@@ -13,6 +14,7 @@ const LABEL: Record<BookingStatus, string> = {
 
 const CLASS: Record<BookingStatus, string> = {
   HELD: 'border-warning/30 bg-surface-muted text-warning',
+  PENDING_VERIFICATION: 'border-warning/30 bg-surface-muted text-warning',
   CONFIRMED: 'border-accent/30 bg-accent-soft text-accent',
   COMPLETED: 'border-border bg-surface-muted text-text',
   CANCELLED: 'border-border bg-surface-muted text-text-muted',

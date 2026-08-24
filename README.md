@@ -121,7 +121,7 @@ This is the part of the system that matters most and the part most worth demonst
 ```sql
 CREATE UNIQUE INDEX one_live_booking_per_slot
 ON "Booking" (date, "slotIndex")
-WHERE status IN ('HELD', 'CONFIRMED', 'COMPLETED');
+WHERE status IN ('HELD', 'CONFIRMED', 'COMPLETED', 'PENDING_VERIFICATION');
 ```
 
 Prisma's schema language cannot express a partial index (a `WHERE` clause on a unique
@@ -132,6 +132,12 @@ that runs inside Postgres is this partial index. It is *partial* specifically so
 **cancelled** booking (status `CANCELLED`/`EXPIRED`/`NO_SHOW`) frees the slot back up — a plain,
 non-partial unique constraint would permanently block that slot forever after the first
 cancellation, which is wrong.
+
+`PENDING_VERIFICATION` was added later, for the bKash advance-payment flow (§6): a customer's
+submitted booking stays exclusively reserved while staff verify the transaction, not just while
+`HELD`/`CONFIRMED`/`COMPLETED`. Adding a value to a Postgres enum and using that value in an index
+predicate can't happen in the same transaction, so this was two migrations, applied in order —
+see the note at the bottom of `prisma/schema.prisma`.
 
 Every write to `Booking` funnels through `lib/booking-engine.ts`, and every one of those writes
 happens inside a **Serializable** transaction, in this fixed order:
@@ -168,6 +174,35 @@ Postgres, and asserts exactly one `fulfilled` promise and nineteen rejections, e
 row. `pnpm e2e` runs it; the terminal output is the single most convincing thirty seconds of the
 whole project.
 
+The diagram above is the **counter-booking path** (staff, `INSERT ... status=CONFIRMED` directly)
+— it's the one the concurrency test exercises, since it's the path that actually races on the
+INSERT. The **public online path** goes through one extra step first: `createBooking()` with a
+`holdId` moves that row from `HELD` to `PENDING_VERIFICATION` instead of `CONFIRMED` — same
+partial index, same exclusive reservation, but a human has to verify the bKash advance before it
+becomes `CONFIRMED` (§6, §4b below).
+
+### 4b. The bKash advance-verification flow
+
+`CLAUDE.md` invariant 10, added alongside the domain spec: **a public booking is never
+`CONFIRMED` on submission.** The confirm form (`/book/confirm`) collects email, address and a
+bKash "Send Money" transaction ID for a small advance (amount set in `/admin/pricing`, `৳1000` by
+default) and submits it — that moves the row to `PENDING_VERIFICATION`, not `CONFIRMED`. A staff
+member checks the TRXN against their own bKash statement (there is no merchant API integration —
+verification is manual by design, see §15) from `/admin/bookings/[id]`, and either:
+
+- **Verifies it** (`verifyPaymentClaim`) → the claim's `Payment` row flips to `VERIFIED`, its
+  amount is folded into `amountPaid`/`paymentStatus` exactly like a normal recorded payment, and
+  the booking becomes `CONFIRMED`. This is the only place `notifyBookingConfirmed` fires for an
+  online booking — sending a "confirmed" email before anyone checked the money would be a lie.
+- **Rejects it** (`rejectPaymentClaim`) → `Payment.status` flips to `REJECTED` with a reason, and
+  the booking is `CANCELLED`, releasing the slot immediately.
+
+If staff do neither, the claim isn't left locking the slot forever: `VenueSetting.paymentVerificationHours`
+(default 24h) is a second, independent deadline on the row, alongside `holdExpiresAt`'s 10 minutes
+for the earlier `HELD` state — the same sweep that expires stale holds also expires stale
+unverified claims, inside every write transaction (`sweepExpiredHolds` in `lib/booking-engine.ts`,
+despite the name predating this feature).
+
 **A second, quieter correctness detail:** Prisma serializes a `@db.Date` column using a JS
 `Date`'s **UTC** year/month/day, not its local ones. Every place in this codebase that builds a
 `date` value bound for that column goes through one function,
@@ -203,6 +238,8 @@ erDiagram
         string id PK
         string phone UK
         string fullName
+        string email "nullable in DB, required by Zod for new bookings"
+        string address "nullable in DB, required by Zod for new bookings"
         boolean isBlocked
         int totalBookings
         int totalNoShows
@@ -231,6 +268,8 @@ erDiagram
     Payment {
         decimal amount
         PaymentMethod method
+        PaymentClaimStatus status "VERIFIED by default; PENDING only for a customer's self-reported bKash claim"
+        string trxId "the bKash advance TRXN, PENDING claims only"
     }
     AuditLog {
         string action
@@ -261,8 +300,11 @@ Key modelling decisions:
 ```mermaid
 stateDiagram-v2
     [*] --> HELD: public visitor selects a slot\n(holdSlot)
-    HELD --> CONFIRMED: form submitted within 10 min\n(confirmBookingAction)
+    HELD --> PENDING_VERIFICATION: confirm form submitted\n(email, address, bKash TRXN)
     HELD --> EXPIRED: 10-minute hold lapses\n(swept inside the next write transaction)
+    PENDING_VERIFICATION --> CONFIRMED: staff verifies the TRXN\n(verifyPaymentClaim)
+    PENDING_VERIFICATION --> CANCELLED: staff rejects the TRXN\n(rejectPaymentClaim)
+    PENDING_VERIFICATION --> EXPIRED: verification window lapses\n(default 24h, same sweep as HELD)
     [*] --> CONFIRMED: staff counter booking\n(createCounterBookingAction, source=COUNTER)
     CONFIRMED --> COMPLETED: slot end time passed AND checked in
     CONFIRMED --> CANCELLED: public (>6h before start) or staff (any time)
@@ -272,7 +314,8 @@ stateDiagram-v2
 
 Every transition not drawn above is rejected in the domain layer
 (`lib/booking-engine.ts`) with a typed error — there is no code path that can, for example, mark
-a `HELD` booking as `NO_SHOW`, or cancel something already `CANCELLED`.
+a `HELD` booking as `NO_SHOW`, confirm a booking straight from `HELD` without going through
+verification, or cancel something already `CANCELLED`.
 
 ## 7. Route map
 
@@ -472,12 +515,28 @@ which need real account credentials this repository's automation does not have.
   for the qualitative "which slots are dead" read the report is for, not a billing figure.
 - **No automated Lighthouse budget enforcement locally** — only in CI, against the deployed
   build.
+- **bKash verification is manual, by design.** This app has no bKash merchant/payment-gateway API
+  integration (that requires a registered merchant account this project doesn't have) — a
+  customer's submitted TRXN ID is just a string until a staff member checks it against their own
+  bKash statement and clicks Verify. A real production deployment handling meaningful volume would
+  want the merchant API instead, so verification isn't a manual queue.
+- **A fabricated TRXN can lock a slot for up to `paymentVerificationHours` (default 24h).**
+  `holdSlotAction` is rate-limited per IP (§4b), and the 2-active-booking cap counts
+  `PENDING_VERIFICATION` too, but neither stops a determined attacker rotating IPs and phone
+  numbers from squatting several slots with plausible-looking-but-fake TRXN strings until staff
+  reject them. Lowering `paymentVerificationHours` in `/admin/pricing` shrinks the exposure window
+  at the cost of a shorter grace period for slow-to-check staff. Phone-number verification (OTP at
+  hold time) would close this properly; it's out of scope here — see the demo script's own honesty
+  about what this project is and isn't (§16).
 
 ## 16. Demo script
 
 The order this project's `BUILD_PLAN.md` recommends presenting it in (roughly twelve minutes):
 
-1. **Book a slot on a phone**, projected — under 90 seconds, no login.
+1. **Book a slot on a phone**, projected — under 90 seconds, no login. Submit a (fake, for the
+   demo) bKash TRXN and show the receipt page reads "awaiting payment verification", not
+   "confirmed" — then switch to `/admin/bookings/[id]` and verify it live, explaining why the
+   slot stayed locked the whole time (the widened partial index).
 2. **Run the concurrency test live**: `pnpm e2e -g concurrency`. Twenty requests, one wins.
    Explain the partial unique index. *(Lead with this if short on time — it is the single most
    convincing thing in the project.)*

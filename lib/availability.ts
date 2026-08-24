@@ -24,6 +24,7 @@ import {
  *  never has to import @prisma/client just for a type. */
 export type BookingStatusLike =
   | 'HELD'
+  | 'PENDING_VERIFICATION'
   | 'CONFIRMED'
   | 'COMPLETED'
   | 'CANCELLED'
@@ -34,6 +35,7 @@ export type BookingStatusLike =
  *  keep these two lists in sync. */
 export const LIVE_BOOKING_STATUSES: readonly BookingStatusLike[] = [
   'HELD',
+  'PENDING_VERIFICATION',
   'CONFIRMED',
   'COMPLETED',
 ];
@@ -52,6 +54,10 @@ export interface AvailabilityBooking {
    * against double booking, not this read path.
    */
   holdExpiresAt?: Date | null;
+  /** Same self-healing idea as holdExpiresAt, for status ===
+   * 'PENDING_VERIFICATION': a claim staff never acted on reads as freed
+   * once its deadline passes, even before the next write's sweep runs. */
+  paymentVerificationExpiresAt?: Date | null;
 }
 
 export interface AvailabilitySlotRule {
@@ -104,6 +110,12 @@ export function getDayAvailability(input: DayAvailabilityInput): SlotView[] {
     if (!LIVE_BOOKING_STATUSES.includes(booking.status)) return false;
     if (booking.status === 'HELD') {
       return !!booking.holdExpiresAt && booking.holdExpiresAt.getTime() > now.getTime();
+    }
+    if (booking.status === 'PENDING_VERIFICATION') {
+      return (
+        !!booking.paymentVerificationExpiresAt &&
+        booking.paymentVerificationExpiresAt.getTime() > now.getTime()
+      );
     }
     return true;
   }

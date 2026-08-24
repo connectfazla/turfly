@@ -157,11 +157,20 @@ function assertSlotBookable(slot: SlotView): void {
   }
 }
 
-/** Frees expired holds so they stop occupying the partial unique index.
- * Must run inside the same transaction as the write that follows it. */
+/** Frees expired holds AND stale payment-verification claims so they stop
+ * occupying the partial unique index. Must run inside the same
+ * transaction as the write that follows it. The PENDING_VERIFICATION leg
+ * is the failsafe for a customer who submitted a fake/never-arriving
+ * bKash TRXN and staff never acted on it — after
+ * VenueSetting.paymentVerificationHours the slot frees itself instead of
+ * being locked forever. */
 async function sweepExpiredHolds(tx: Tx, now: Date): Promise<void> {
   await tx.booking.updateMany({
     where: { status: 'HELD', holdExpiresAt: { lt: now } },
+    data: { status: 'EXPIRED' },
+  });
+  await tx.booking.updateMany({
+    where: { status: 'PENDING_VERIFICATION', paymentVerificationExpiresAt: { lt: now } },
     data: { status: 'EXPIRED' },
   });
 }
@@ -174,7 +183,13 @@ async function sweepExpiredHolds(tx: Tx, now: Date): Promise<void> {
  * blocked this phone number. */
 async function upsertCustomer(
   tx: Tx,
-  input: { phone: string; fullName: string; email?: string | null; teamName?: string | null },
+  input: {
+    phone: string;
+    fullName: string;
+    email?: string | null;
+    address?: string | null;
+    teamName?: string | null;
+  },
 ) {
   const existing = await tx.customer.findUnique({ where: { phone: input.phone } });
   if (existing?.isBlocked) {
@@ -186,6 +201,7 @@ async function upsertCustomer(
         phone: input.phone,
         fullName: input.fullName,
         email: input.email ?? null,
+        address: input.address ?? null,
         teamName: input.teamName ?? null,
       },
     });
@@ -195,6 +211,7 @@ async function upsertCustomer(
     data: {
       fullName: input.fullName,
       email: input.email ?? existing.email,
+      address: input.address ?? existing.address,
       teamName: input.teamName ?? existing.teamName,
     },
   });
@@ -213,13 +230,16 @@ async function nextReference(tx: Tx, now: Date): Promise<string> {
 /** CLAUDE.md §2 invariant 6: max 2 active future bookings per phone
  * number via the public page (staff/COUNTER bookings skip this check
  * entirely - see createFreshConfirmedBooking). "Active future" = CONFIRMED
- * and not yet started; fetched then filtered in JS rather than in SQL so
- * the exact-slot-start comparison stays on the same TZ-safe footing as
- * the rest of the app (see lib/availability-service.ts's dateOnly doc). */
+ * or PENDING_VERIFICATION and not yet started; fetched then filtered in JS
+ * rather than in SQL so the exact-slot-start comparison stays on the same
+ * TZ-safe footing as the rest of the app (see lib/availability-service.ts's
+ * dateOnly doc). PENDING_VERIFICATION counts too - otherwise a customer
+ * could bypass the 2-booking cap by submitting fake TRXNs to hold extra
+ * slots that staff haven't gotten to yet. */
 async function countActiveBookings(tx: Tx, customerId: string, now: Date): Promise<number> {
   const today = dateOnly(now);
   const candidates = await tx.booking.findMany({
-    where: { customerId, status: 'CONFIRMED', date: { gte: today } },
+    where: { customerId, status: { in: ['CONFIRMED', 'PENDING_VERIFICATION'] }, date: { gte: today } },
     select: { date: true, slotIndex: true },
   });
   return candidates.filter((b) => !hasSlotStarted(b.date, b.slotIndex as SlotIndex, now)).length;
@@ -305,6 +325,7 @@ interface CreateBookingCommon {
   date: Date;
   slotIndex: number;
   email?: string;
+  address?: string;
   teamName?: string;
   note?: string;
   now?: Date;
@@ -316,6 +337,11 @@ export interface ConfirmHeldBookingInput extends CreateBookingCommon {
    * (fixed at hold time) and reference (already generated) are reused, not
    * re-derived from anything in this call. */
   holdId: string;
+  /** The customer's self-reported bKash advance transaction ID. Required
+   * for this path — confirmBookingSchema enforces it before this function
+   * ever sees the input. Never validated against bKash itself (no
+   * merchant API); staff verify it manually, see verifyPaymentClaim(). */
+  trxId: string;
 }
 
 export interface CreateFreshBookingInput extends CreateBookingCommon {
@@ -341,11 +367,15 @@ function isConfirmHeldInput(input: CreateBookingInput): input is ConfirmHeldBook
 }
 
 /**
- * HELD -> CONFIRMED (public, via holdId) or — -> CONFIRMED (counter
- * booking, staff, no holdId). Either way: sweep expired holds, assert
- * bookability, upsert the Customer by phone, enforce the 2-active-booking
- * limit (skipped for COUNTER), generate the reference (fresh-insert path
- * only — a held row already has one), create/confirm the row, write audit.
+ * HELD -> PENDING_VERIFICATION (public, via holdId — the customer just
+ * submitted their bKash advance TRXN; a staff member has to verify it
+ * before this becomes CONFIRMED, see verifyPaymentClaim()) or — ->
+ * CONFIRMED (counter booking, staff, no holdId — staff already collected
+ * the money in person, nothing to verify). Either way: sweep expired
+ * holds, assert bookability, upsert the Customer by phone, enforce the
+ * 2-active-booking limit (skipped for COUNTER), generate the reference
+ * (fresh-insert path only — a held row already has one), create/update
+ * the row, write audit.
  */
 export async function createBooking(input: CreateBookingInput): Promise<Booking> {
   assertValidSlotIndex(input.slotIndex);
@@ -368,8 +398,11 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
 }
 
 /** The holdId branch of createBooking: turns an existing HELD row into
- * CONFIRMED. Validates the hold still belongs to this exact (date,
- * slotIndex) and hasn't expired before touching anything. */
+ * PENDING_VERIFICATION (NOT CONFIRMED — a human still has to check the
+ * submitted bKash TRXN, see verifyPaymentClaim()). Validates the hold
+ * still belongs to this exact (date, slotIndex) and hasn't expired before
+ * touching anything. Records the claimed advance as a PENDING Payment row
+ * so it shows up in the admin verification queue. */
 async function confirmHeldBooking(
   tx: Tx,
   input: ConfirmHeldBookingInput,
@@ -388,32 +421,56 @@ async function confirmHeldBooking(
   if (!held.holdExpiresAt || held.holdExpiresAt.getTime() <= now.getTime()) {
     throw new HoldExpiredError();
   }
+  if (!input.email || !input.address || !input.trxId) {
+    // Defense in depth — confirmBookingSchema already requires all three
+    // before this function is ever called.
+    throw new InvalidTransitionError('Email, address and the bKash transaction ID are all required.');
+  }
 
   const before = held;
-  // The customer is fixed at hold time (held.customerId) — email/teamName
-  // may still be filled in here, but never by re-resolving on a phone
-  // number, which could silently attach these details to a DIFFERENT
-  // customer if the confirm form ever carried a different phone.
+  // The customer is fixed at hold time (held.customerId) — email/address/
+  // teamName may still be filled in here, but never by re-resolving on a
+  // phone number, which could silently attach these details to a
+  // DIFFERENT customer if the confirm form ever carried a different phone.
+  // totalBookings is NOT incremented here — it counts actually-confirmed
+  // bookings, so that happens in verifyPaymentClaim() instead.
   const customer = await tx.customer.findUniqueOrThrow({ where: { id: held.customerId } });
   await tx.customer.update({
     where: { id: customer.id },
     data: {
-      email: input.email ?? customer.email,
+      email: input.email,
+      address: input.address,
       teamName: input.teamName ?? customer.teamName,
-      totalBookings: { increment: 1 },
     },
   });
+
+  const venue = await tx.venueSetting.findUnique({ where: { id: 'singleton' } });
+  const verificationHours = venue?.paymentVerificationHours ?? 24;
+  const advanceAmount = venue ? Number(venue.advanceAmount) : 1000;
+  const paymentVerificationExpiresAt = new Date(now.getTime() + verificationHours * 3_600_000);
 
   const booking = await tx.booking.update({
     where: { id: held.id },
     data: {
-      status: 'CONFIRMED',
+      status: 'PENDING_VERIFICATION',
       holdExpiresAt: null,
+      paymentVerificationExpiresAt,
       customerNote: input.note ?? held.customerNote,
     },
   });
 
-  await writeAudit(tx, { action: 'BOOKING_CONFIRMED', entityId: booking.id, before, after: booking });
+  await tx.payment.create({
+    data: {
+      bookingId: booking.id,
+      amount: advanceAmount,
+      method: 'BKASH',
+      status: 'PENDING',
+      trxId: input.trxId,
+      receivedById: null,
+    },
+  });
+
+  await writeAudit(tx, { action: 'PAYMENT_CLAIM_SUBMITTED', entityId: booking.id, before, after: booking });
   return booking;
 }
 
@@ -436,6 +493,7 @@ async function createFreshConfirmedBooking(
     phone: input.phone,
     fullName: input.fullName,
     email: input.email,
+    address: input.address,
     teamName: input.teamName,
   });
 
@@ -706,6 +764,134 @@ export async function recordPayment(input: RecordPaymentInput): Promise<Booking>
     await writeAudit(tx, {
       actorId: input.staffUserId,
       action: 'PAYMENT_RECORDED',
+      entityId: updated.id,
+      before,
+      after: updated,
+    });
+    return updated;
+  });
+}
+
+// ---------------------------------------------------------------- payment verification
+
+export interface VerifyPaymentClaimInput {
+  bookingId: string;
+  staffUserId: string;
+  now?: Date;
+}
+
+/** PENDING_VERIFICATION -> CONFIRMED. Staff checked their own bKash
+ * statement and confirmed the customer's submitted TRXN actually landed
+ * (there is no merchant API here to check this automatically — see
+ * CLAUDE.md's "no secrets, no third-party payment gateway" scope). Marks
+ * the pending Payment row VERIFIED and folds its amount into
+ * amountPaid/paymentStatus exactly like recordPayment() would, then
+ * increments the customer's totalBookings — this is the point a booking
+ * actually counts as one, not when the claim was first submitted. */
+export async function verifyPaymentClaim(input: VerifyPaymentClaimInput): Promise<Booking> {
+  const now = input.now ?? new Date();
+
+  return prisma.$transaction(async (tx) => {
+    const booking = await tx.booking.findUnique({ where: { id: input.bookingId } });
+    if (!booking) throw new InvalidTransitionError('Booking not found.');
+    if (booking.status !== 'PENDING_VERIFICATION') {
+      throw new InvalidTransitionError(`Cannot verify a booking with status ${booking.status}.`);
+    }
+    const claim = await tx.payment.findFirst({
+      where: { bookingId: booking.id, status: 'PENDING' },
+      orderBy: { receivedAt: 'desc' },
+    });
+    if (!claim) throw new InvalidTransitionError('No pending payment claim found for this booking.');
+
+    const before = booking;
+    await tx.payment.update({
+      where: { id: claim.id },
+      data: { status: 'VERIFIED', receivedById: input.staffUserId, receivedAt: now },
+    });
+
+    const newAmountPaid = Number(booking.amountPaid) + Number(claim.amount);
+    const priceAmount = Number(booking.priceAmount);
+    const paymentStatus = newAmountPaid <= 0 ? 'UNPAID' : newAmountPaid < priceAmount ? 'PARTIAL' : 'PAID';
+
+    const updated = await tx.booking.update({
+      where: { id: booking.id },
+      data: {
+        status: 'CONFIRMED',
+        paymentVerificationExpiresAt: null,
+        amountPaid: newAmountPaid,
+        paymentStatus,
+      },
+    });
+
+    await tx.customer.update({
+      where: { id: booking.customerId },
+      data: { totalBookings: { increment: 1 } },
+    });
+
+    await writeAudit(tx, {
+      actorId: input.staffUserId,
+      action: 'PAYMENT_VERIFIED',
+      entityId: updated.id,
+      before,
+      after: updated,
+    });
+    return updated;
+  });
+}
+
+export interface RejectPaymentClaimInput {
+  bookingId: string;
+  staffUserId: string;
+  reason: string;
+  now?: Date;
+}
+
+/** PENDING_VERIFICATION -> CANCELLED. Staff couldn't verify the TRXN
+ * (never arrived, wrong amount, doesn't exist) — releases the slot back
+ * to the pool immediately rather than waiting out the auto-expiry
+ * deadline. Distinct from cancelBooking(), which only operates on
+ * CONFIRMED bookings and applies the public cancellation-window rule that
+ * doesn't make sense for a claim that was never actually approved. */
+export async function rejectPaymentClaim(input: RejectPaymentClaimInput): Promise<Booking> {
+  const now = input.now ?? new Date();
+
+  return prisma.$transaction(async (tx) => {
+    const booking = await tx.booking.findUnique({ where: { id: input.bookingId } });
+    if (!booking) throw new InvalidTransitionError('Booking not found.');
+    if (booking.status !== 'PENDING_VERIFICATION') {
+      throw new InvalidTransitionError(`Cannot reject a booking with status ${booking.status}.`);
+    }
+    const claim = await tx.payment.findFirst({
+      where: { bookingId: booking.id, status: 'PENDING' },
+      orderBy: { receivedAt: 'desc' },
+    });
+
+    const before = booking;
+    if (claim) {
+      await tx.payment.update({
+        where: { id: claim.id },
+        data: {
+          status: 'REJECTED',
+          receivedById: input.staffUserId,
+          receivedAt: now,
+          rejectedReason: input.reason,
+        },
+      });
+    }
+
+    const updated = await tx.booking.update({
+      where: { id: booking.id },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt: now,
+        cancelReason: input.reason,
+        paymentVerificationExpiresAt: null,
+      },
+    });
+
+    await writeAudit(tx, {
+      actorId: input.staffUserId,
+      action: 'PAYMENT_REJECTED',
       entityId: updated.id,
       before,
       after: updated,

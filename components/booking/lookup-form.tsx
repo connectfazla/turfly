@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { formatBDT, formatDateLong } from '@/lib/format';
+import { formatBDT, formatBookingStatus, formatDateLong } from '@/lib/format';
 import { slotLabel, type SlotIndex } from '@/lib/slots';
 
 export function LookupForm() {
@@ -110,7 +110,7 @@ export function LookupForm() {
             </div>
             <div className="flex justify-between">
               <span className="text-text-muted">Status</span>
-              <span>{result.status}</span>
+              <span>{formatBookingStatus(result.status)}</span>
             </div>
 
             {cancelState === 'done' ? (

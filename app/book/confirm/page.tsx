@@ -3,9 +3,12 @@
  *
  * Step 2 of the public flow: the visitor already holds a slot (created
  * by holdSlot() when they clicked it on /book/[date]) and now finishes
- * the form (email, team, note) before the 10-minute hold expires. If the
- * hold is missing or has expired, shows a friendly message instead of a
- * 404, since that's an expected, recoverable state, not an error.
+ * the form (email, address, team, note, bKash advance TRXN) before the
+ * 10-minute hold expires. Submitting does NOT confirm the booking outright
+ * — it moves the hold to PENDING_VERIFICATION and staff verify the
+ * advance before it becomes CONFIRMED. If the hold is missing or has
+ * expired, shows a friendly message instead of a 404, since that's an
+ * expected, recoverable state, not an error.
  */
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -29,7 +32,10 @@ export default async function ConfirmPage({ searchParams }: Props) {
     redirect('/book');
   }
 
-  const booking = await prisma.booking.findUnique({ where: { id: holdId } });
+  const [booking, venue] = await Promise.all([
+    prisma.booking.findUnique({ where: { id: holdId } }),
+    prisma.venueSetting.findUnique({ where: { id: 'singleton' } }),
+  ]);
   const now = new Date();
   const isValidHold = !!(
     booking &&
@@ -64,6 +70,9 @@ export default async function ConfirmPage({ searchParams }: Props) {
               date={dateParam}
               slotIndex={booking.slotIndex}
               holdExpiresAt={booking.holdExpiresAt!.toISOString()}
+              priceAmount={booking.priceAmount.toString()}
+              bkashNumber={venue?.bkashNumber ?? ''}
+              advanceAmount={Number(venue?.advanceAmount ?? 1000)}
             />
           </>
         )}

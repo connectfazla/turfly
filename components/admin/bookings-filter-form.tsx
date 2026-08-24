@@ -16,6 +16,7 @@ import {
 const STATUS_OPTIONS = [
   { value: 'ALL', label: 'Any status' },
   { value: 'HELD', label: 'Held' },
+  { value: 'PENDING_VERIFICATION', label: 'Awaiting payment' },
   { value: 'CONFIRMED', label: 'Confirmed' },
   { value: 'COMPLETED', label: 'Completed' },
   { value: 'CANCELLED', label: 'Cancelled' },

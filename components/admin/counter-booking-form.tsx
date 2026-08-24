@@ -27,8 +27,10 @@ export function CounterBookingForm() {
       phone: '',
       fullName: '',
       email: '',
+      address: '',
       teamName: '',
       note: '',
+      paymentMethod: 'CASH',
     },
   });
 
@@ -41,7 +43,16 @@ export function CounterBookingForm() {
       return;
     }
     setSuccess(result.data.reference);
-    form.reset({ ...values, phone: '', fullName: '', email: '', teamName: '', note: '' });
+    form.reset({
+      ...values,
+      phone: '',
+      fullName: '',
+      email: '',
+      address: '',
+      teamName: '',
+      note: '',
+      amountReceived: undefined,
+    });
     router.refresh();
   }
 
@@ -106,6 +117,11 @@ export function CounterBookingForm() {
       </div>
 
       <div className="flex flex-col gap-1.5">
+        <Label htmlFor="address">Address (optional)</Label>
+        <Input id="address" className="rounded-(--radius-input)" {...form.register('address')} />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
         <Label htmlFor="note">Note (optional)</Label>
         <Textarea id="note" rows={2} className="rounded-(--radius-input)" {...form.register('note')} />
       </div>
@@ -121,6 +137,36 @@ export function CounterBookingForm() {
           className="rounded-(--radius-input)"
           {...form.register('priceOverride', { valueAsNumber: true })}
         />
+      </div>
+
+      <div className="flex gap-3 rounded-(--radius-card) border border-border bg-surface-muted p-3">
+        <div className="flex flex-1 flex-col gap-1.5">
+          <Label htmlFor="paymentMethod">Payment received</Label>
+          <Select
+            value={form.watch('paymentMethod')}
+            onValueChange={(v) => form.setValue('paymentMethod', v as CounterBookingFormInput['paymentMethod'])}
+          >
+            <SelectTrigger id="paymentMethod" className="rounded-(--radius-input)">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="CASH">Cash</SelectItem>
+              <SelectItem value="BKASH">bKash (online)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-1 flex-col gap-1.5">
+          <Label htmlFor="amountReceived">Amount received (optional, BDT)</Label>
+          <Input
+            id="amountReceived"
+            type="number"
+            step="1"
+            min="0"
+            placeholder="Leave blank to record later"
+            className="rounded-(--radius-input)"
+            {...form.register('amountReceived', { valueAsNumber: true })}
+          />
+        </div>
       </div>
 
       {serverError ? (

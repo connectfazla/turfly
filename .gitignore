@@ -44,3 +44,6 @@ next-env.d.ts
 coverage/
 playwright-report/
 test-results/
+
+# graphify knowledge-graph output (generated, local tooling artifact)
+/graphify-out/

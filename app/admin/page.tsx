@@ -37,10 +37,13 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
 
   await sweepDueCompletions(now);
 
-  const bookings = await prisma.booking.findMany({
-    where: { date: day, status: { in: ['HELD', 'CONFIRMED', 'COMPLETED'] } },
-    include: { customer: true },
-  });
+  const [bookings, pendingVerificationCount] = await Promise.all([
+    prisma.booking.findMany({
+      where: { date: day, status: { in: ['HELD', 'PENDING_VERIFICATION', 'CONFIRMED', 'COMPLETED'] } },
+      include: { customer: true },
+    }),
+    prisma.booking.count({ where: { status: 'PENDING_VERIFICATION' } }),
+  ]);
   const bookingBySlot = new Map(bookings.map((b) => [b.slotIndex, b]));
 
   const isToday = dateOnly(now).getTime() === day.getTime();
@@ -52,6 +55,19 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
         <div className="mb-6 rounded-(--radius-card) border border-danger/30 bg-surface-muted px-4 py-3 text-body text-danger">
           You don&apos;t have permission to view that page.
         </div>
+      ) : null}
+
+      {pendingVerificationCount > 0 ? (
+        <Link
+          href="/admin/bookings?status=PENDING_VERIFICATION"
+          className="mb-6 flex items-center justify-between rounded-(--radius-card) border border-warning/30 bg-surface-muted px-4 py-3 text-body text-warning hover:bg-accent-soft/40"
+        >
+          <span>
+            {pendingVerificationCount} booking{pendingVerificationCount === 1 ? '' : 's'} awaiting payment
+            verification
+          </span>
+          <span className="text-caption underline">Review →</span>
+        </Link>
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -117,6 +133,10 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
                       <CheckInButton bookingId={booking.id} />
                     ) : booking.checkedInAt ? (
                       <span className="text-caption text-accent">Checked in</span>
+                    ) : booking.status === 'PENDING_VERIFICATION' ? (
+                      <span className="text-caption text-warning">Awaiting payment</span>
+                    ) : booking.status === 'HELD' ? (
+                      <span className="text-caption text-text-muted">Held</span>
                     ) : null}
                   </div>
                 </>

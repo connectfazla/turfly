@@ -33,10 +33,11 @@ export function PricingForm({ current }: { current: PricingFormInput }) {
   }
 
   const fields: { name: keyof PricingFormInput; label: string; hint: string }[] = [
-    { name: 'standard', label: 'Weekday standard', hint: 'Mon–Thu, off-peak slots' },
-    { name: 'peak', label: 'Weekday peak', hint: 'Mon–Thu, 16:30–22:30' },
-    { name: 'weekendStandard', label: 'Weekend standard', hint: 'Fri–Sat, off-peak slots' },
-    { name: 'weekendPeak', label: 'Weekend peak', hint: 'Fri–Sat, 16:30–22:30' },
+    { name: 'noon', label: 'Noon', hint: 'Every day, 09:00–15:00' },
+    { name: 'afternoon', label: 'Weekday afternoon', hint: 'Sun–Thu, early morning + evening/late night' },
+    { name: 'weekendAfternoon', label: 'Weekend afternoon', hint: 'Fri–Sat, early morning + evening/late night' },
+    { name: 'night', label: 'Weekday night', hint: 'Sun–Thu, 16:30–23:00' },
+    { name: 'weekendNight', label: 'Weekend night', hint: 'Fri–Sat, 16:30–23:00' },
   ];
 
   return (

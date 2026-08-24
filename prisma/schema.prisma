@@ -21,6 +21,12 @@ enum Role {
 
 enum BookingStatus {
   HELD
+  /// Customer has submitted a bKash advance TRXN and is waiting for staff
+  /// to verify it landed. Occupies the slot exclusively, same as HELD/
+  /// CONFIRMED/COMPLETED — see the partial index note at the bottom of
+  /// this file. Auto-expires to EXPIRED after PAYMENT_VERIFICATION_HOURS
+  /// if staff never act on it (lib/booking-engine.ts's sweep).
+  PENDING_VERIFICATION
   CONFIRMED
   COMPLETED
   CANCELLED
@@ -47,6 +53,19 @@ enum PaymentMethod {
   BANK_TRANSFER
   CARD
   OTHER
+}
+
+/// VERIFIED is the default because every Payment row staff create directly
+/// (RecordPaymentForm, recordPayment()) was money they physically took —
+/// there is nothing to verify. PENDING exists only for the one path where
+/// the money hasn't been confirmed by a human yet: a customer's
+/// self-reported bKash advance TRXN, submitted at booking time and sitting
+/// in the admin "awaiting verification" queue until staff check it against
+/// their bKash statement.
+enum PaymentClaimStatus {
+  PENDING
+  VERIFIED
+  REJECTED
 }
 
 // ---------------------------------------------------------------- staff
@@ -78,7 +97,12 @@ model Customer {
   id             String   @id @default(cuid())
   phone          String   @unique
   fullName       String
+  /// Column stays nullable so old rows never need a backfill, but every
+  /// NEW booking (public confirm form, counter form) requires it at the
+  /// Zod layer — see lib/schemas/booking.ts's confirmBookingSchema.
   email          String?
+  /// Same nullability story as email above.
+  address        String?
   teamName       String?
   totalBookings  Int      @default(0)
   totalNoShows   Int      @default(0)
@@ -110,6 +134,11 @@ model Booking {
   status        BookingStatus @default(HELD)
   /// Set only while status = HELD. Swept inside createBooking's transaction.
   holdExpiresAt DateTime?
+  /// Set only while status = PENDING_VERIFICATION — the failsafe deadline
+  /// for staff to verify the submitted bKash TRXN before the slot is
+  /// automatically released back to the pool. Same shape as holdExpiresAt,
+  /// swept by the same mechanism (lib/booking-engine.ts).
+  paymentVerificationExpiresAt DateTime?
 
   priceAmount   Decimal       @db.Decimal(10, 2)
   paymentStatus PaymentStatus @default(UNPAID)
@@ -181,6 +210,20 @@ model VenueSetting {
   holdMinutes             Int     @default(10)
   cancellationWindowHours Int     @default(6)
   bookingWindowDays       Int     @default(14)
+  /// The personal/merchant bKash "Send Money" number customers pay the
+  /// advance to. Deliberately a DB value, not a hard-coded constant or
+  /// even an env var baked into a commit — the owner edits it from
+  /// /admin/pricing, so it's never sitting in source history and can be
+  /// rotated without a redeploy. Seeded with a placeholder; the real
+  /// number is entered once, after first login.
+  bkashNumber             String  @default("01700000000")
+  /// The advance amount (BDT) required to move a booking out of
+  /// PENDING_VERIFICATION. Configurable so a price change doesn't need a
+  /// code deploy.
+  advanceAmount           Decimal @default(1000) @db.Decimal(10, 2)
+  /// Hours a PENDING_VERIFICATION booking is held before it auto-expires
+  /// if staff never verify or reject the submitted TRXN.
+  paymentVerificationHours Int    @default(24)
   updatedAt               DateTime @updatedAt
 }
 
@@ -193,13 +236,29 @@ model Payment {
   booking        Booking       @relation(fields: [bookingId], references: [id])
   amount         Decimal       @db.Decimal(10, 2)
   method         PaymentMethod @default(CASH)
-  receivedById   String
-  receivedBy     User          @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
+  /// Null only while status = PENDING — a customer's self-reported claim
+  /// has no staff receiver until someone verifies it. Every VERIFIED or
+  /// REJECTED row has this set to whoever made that call.
+  receivedById   String?
+  receivedBy     User?         @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
   receivedAt     DateTime      @default(now())
   note           String?
 
+  /// Defaults to VERIFIED: staff-recorded rows (RecordPaymentForm) are
+  /// money already physically taken, nothing left to verify. Only the
+  /// customer-submitted bKash-advance path creates a PENDING row.
+  status         PaymentClaimStatus @default(VERIFIED)
+  /// The customer-entered bKash transaction ID, for the PENDING advance
+  /// path only. Never validated against bKash's own systems — this app
+  /// has no bKash merchant API integration, so verification is manual
+  /// (staff check their bKash statement) per CLAUDE.md's "no secrets, no
+  /// third-party payment gateway" scope.
+  trxId          String?
+  rejectedReason String?
+
   @@index([bookingId])
   @@index([receivedAt])
+  @@index([status])
 }
 
 // ---------------------------------------------------------------- audit
@@ -245,4 +304,16 @@ model AuditLog {
 // Then run `prisma migrate dev`. Verify with `\d "Booking"` in psql that the
 // index exists AND shows its WHERE clause. This one index is what makes double
 // booking structurally impossible.
+//
+// UPDATE (payment-verification feature): PENDING_VERIFICATION was added to
+// BookingStatus so a slot stays exclusively reserved while staff verify a
+// customer's submitted bKash TRXN. The index's WHERE clause was widened in
+// a LATER migration to:
+//
+//   WHERE status IN ('HELD','CONFIRMED','COMPLETED','PENDING_VERIFICATION')
+//
+// This had to be its own migration, run AFTER the one that adds the new
+// enum value — Postgres will not let a transaction both add an enum value
+// and use that value (e.g. in an index predicate) in the same transaction,
+// and `prisma migrate dev` runs each migration.sql as one transaction.
 // ================================================================

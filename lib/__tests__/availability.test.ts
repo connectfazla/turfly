@@ -106,15 +106,16 @@ describe('booked — and the "booked beats past" ordering trap', () => {
     expect(slot.price).toBeNull();
   });
 
-  it.each(['HELD', 'CONFIRMED', 'COMPLETED'] as const)(
+  it.each(['HELD', 'PENDING_VERIFICATION', 'CONFIRMED', 'COMPLETED'] as const)(
     '%s bookings occupy the slot (live statuses)',
     (status) => {
       const now = new Date(2026, 7, 20, 0, 0);
       const booking: AvailabilityBooking = {
         slotIndex: 9,
         status,
-        // Only read for status === 'HELD'; harmless for the others.
+        // Only read for status === 'HELD' or 'PENDING_VERIFICATION'; harmless for the others.
         holdExpiresAt: new Date(2026, 7, 20, 0, 30),
+        paymentVerificationExpiresAt: new Date(2026, 7, 20, 0, 30),
       };
       const result = getDayAvailability(baseInput({ now, bookings: [booking] }));
       expect(result.find((s) => s.index === 9)!.state).toBe('BOOKED');
@@ -159,6 +160,35 @@ describe('HELD self-healing — a lapsed hold stops occupying its slot on read',
 
   it('a HELD booking with no holdExpiresAt is treated as not occupying (defensive)', () => {
     const bookings: AvailabilityBooking[] = [{ slotIndex: 8, status: 'HELD' }];
+    const result = getDayAvailability(baseInput({ bookings }));
+    expect(result.find((s) => s.index === 8)!.state).toBe('AVAILABLE');
+  });
+});
+
+describe('PENDING_VERIFICATION self-healing — a stale unverified claim stops occupying its slot on read', () => {
+  it('a PENDING_VERIFICATION booking with paymentVerificationExpiresAt in the future is BOOKED', () => {
+    const now = new Date(2026, 7, 20, 9, 0);
+    const bookings: AvailabilityBooking[] = [
+      { slotIndex: 8, status: 'PENDING_VERIFICATION', paymentVerificationExpiresAt: new Date(2026, 7, 21, 9, 0) },
+    ];
+    const result = getDayAvailability(baseInput({ now, bookings }));
+    expect(result.find((s) => s.index === 8)!.state).toBe('BOOKED');
+  });
+
+  it('a PENDING_VERIFICATION booking whose deadline has passed no longer occupies the slot', () => {
+    // now is after the deadline but still before slot 8 (noon) actually
+    // starts, so the "booked beats past" ordering never enters into it -
+    // this isolates the self-healing behavior itself.
+    const now = new Date(2026, 7, 20, 9, 20);
+    const bookings: AvailabilityBooking[] = [
+      { slotIndex: 8, status: 'PENDING_VERIFICATION', paymentVerificationExpiresAt: new Date(2026, 7, 20, 9, 10) },
+    ];
+    const result = getDayAvailability(baseInput({ now, bookings }));
+    expect(result.find((s) => s.index === 8)!.state).toBe('AVAILABLE');
+  });
+
+  it('a PENDING_VERIFICATION booking with no paymentVerificationExpiresAt is treated as not occupying (defensive)', () => {
+    const bookings: AvailabilityBooking[] = [{ slotIndex: 8, status: 'PENDING_VERIFICATION' }];
     const result = getDayAvailability(baseInput({ bookings }));
     expect(result.find((s) => s.index === 8)!.state).toBe('AVAILABLE');
   });

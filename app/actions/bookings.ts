@@ -10,6 +10,7 @@
  * Every action returns an ActionResult instead of throwing, so client
  * components can render an error without an error boundary.
  */
+import { headers } from 'next/headers';
 import {
   BookingEngineError,
   cancelBooking,
@@ -29,7 +30,8 @@ import {
   type LookupBookingFormInput,
   type PublicCancelBookingFormInput,
 } from '@/lib/schemas/booking';
-import { notifyBookingCancelled, notifyBookingConfirmed } from '@/lib/notify';
+import { notifyBookingCancelled } from '@/lib/notify';
+import { clientIpFromHeaders, isRateLimited } from '@/lib/auth/rate-limit';
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string };
 
@@ -65,9 +67,25 @@ export interface HoldSlotResult {
 
 /** Step 1 of the public flow: called when a visitor clicks an available
  * slot and fills in the quick name+phone dialog. Creates the HELD row
- * (CLAUDE.md §2 invariant 5) that /book/confirm's HoldTimer counts down. */
+ * (CLAUDE.md §2 invariant 5) that /book/confirm's HoldTimer counts down.
+ *
+ * Rate-limited per IP (reusing the same bucket/threshold as login —
+ * lib/auth/rate-limit.ts). This is the entry point of the public flow:
+ * confirmBookingAction can only ever act on a holdId this function
+ * issued, so limiting hold creation also caps how many
+ * PENDING_VERIFICATION claims one source can spin up. That matters more
+ * since payment verification added a claim: an unverified claim can now
+ * occupy a slot for up to `paymentVerificationHours` (default 24h) with
+ * nothing but a plausible-looking string in the trxId field, versus the
+ * old 10-minute HELD window — a much bigger squatting incentive than
+ * before. This slows a single scripted source; it does not stop
+ * many-IP/many-phone-number abuse (see README §15). */
 export async function holdSlotAction(input: HoldSlotFormInput): Promise<ActionResult<HoldSlotResult>> {
   try {
+    const ip = clientIpFromHeaders(await headers());
+    if (isRateLimited(`hold:${ip}`)) {
+      return { ok: false, error: 'Too many attempts. Please wait a while and try again.', code: 'RATE_LIMITED' };
+    }
     const parsed = holdSlotSchema.parse(input);
     const booking = await holdSlot({
       date: badDate(parsed.date),
@@ -95,7 +113,12 @@ export interface ConfirmBookingResult {
 }
 
 /** Step 2: called when the /book/confirm form is submitted. Turns the
- * caller's own HELD row (parsed.holdId) into CONFIRMED. */
+ * caller's own HELD row (parsed.holdId) into PENDING_VERIFICATION — NOT
+ * CONFIRMED. The customer just submitted their bKash advance TRXN; a
+ * staff member has to verify it before the booking is actually confirmed
+ * (verifyPaymentAction in app/actions/admin-bookings.ts), which is also
+ * where notifyBookingConfirmed now fires — sending a "confirmed" email
+ * here, before anyone checked the payment, would be a lie. */
 export async function confirmBookingAction(
   input: ConfirmBookingFormInput,
 ): Promise<ActionResult<ConfirmBookingResult>> {
@@ -106,10 +129,11 @@ export async function confirmBookingAction(
       date: badDate(parsed.date),
       slotIndex: parsed.slotIndex,
       email: parsed.email,
+      address: parsed.address,
+      trxId: parsed.trxId,
       teamName: parsed.teamName,
       note: parsed.note,
     });
-    void notifyBookingConfirmed(booking.id); // outside the transaction, fire-and-forget
     return { ok: true, data: { reference: booking.reference } };
   } catch (err) {
     return fail(err);

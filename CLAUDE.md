@@ -30,17 +30,18 @@ BOOKABLE/DAY   = 15
 3. At most **one live booking** per `(date, slotIndex)`. Enforced by a *partial* unique index, not by application logic.
 4. A slot whose start time has passed cannot be booked.
 5. Selecting a slot creates a `HELD` row expiring in 10 minutes. Expired holds are swept inside the create transaction.
-6. Max 2 active future bookings per phone number via the public page. Staff may exceed this.
+6. Max 2 active future bookings per phone number via the public page (CONFIRMED + PENDING_VERIFICATION both count). Staff may exceed this.
 7. Public cancellation allowed up to 6 hours before start. After that, staff only.
 8. Blackouts override availability. Warn staff if a blackout would orphan existing bookings.
 9. All timestamps stored UTC. Rendered in `Asia/Dhaka`. Currency BDT.
+10. **A public online booking is never CONFIRMED on submission.** Submitting the confirm form (email, address, bKash advance TRXN) moves HELD -> PENDING_VERIFICATION, which occupies the slot exclusively same as HELD/CONFIRMED/COMPLETED. Only a staff member verifying the TRXN moves it to CONFIRMED. An unverified claim auto-expires after `VenueSetting.paymentVerificationHours` (default 24h) so a fake/abandoned TRXN can't lock a slot forever. Counter bookings (staff, in person) skip this — they go straight to CONFIRMED, since staff already have the money or a bKash notification in hand.
 
 **The partial index** (raw SQL migration — Prisma `@@unique` alone is wrong, it would block re-booking after cancellation):
 
 ```sql
 CREATE UNIQUE INDEX one_live_booking_per_slot
 ON "Booking" (date, "slotIndex")
-WHERE status IN ('HELD','CONFIRMED','COMPLETED');
+WHERE status IN ('HELD','CONFIRMED','COMPLETED','PENDING_VERIFICATION');
 ```
 
 ---
@@ -81,22 +82,26 @@ Seven entities: `User` (staff only), `Customer` (public, keyed by phone), `Booki
 Customers are **not** Users. They never authenticate.
 
 ```
-BookingStatus  HELD | CONFIRMED | COMPLETED | CANCELLED | EXPIRED | NO_SHOW
-PaymentStatus  UNPAID | PARTIAL | PAID | REFUNDED
-BookingSource  ONLINE | COUNTER
-Role           ADMIN | MODERATOR
+BookingStatus       HELD | PENDING_VERIFICATION | CONFIRMED | COMPLETED | CANCELLED | EXPIRED | NO_SHOW
+PaymentStatus        UNPAID | PARTIAL | PAID | REFUNDED
+PaymentClaimStatus   PENDING | VERIFIED | REJECTED    // per Payment row, not per Booking
+BookingSource         ONLINE | COUNTER
+Role                  ADMIN | MODERATOR
 ```
 
 Permitted transitions only:
 ```
-—         → HELD        (slot selected, public)
-HELD      → CONFIRMED   (form submitted)
-HELD      → EXPIRED     (10 min sweep)
-—         → CONFIRMED   (counter booking, staff)
-CONFIRMED → COMPLETED   (end time passed + checked in)
-CONFIRMED → CANCELLED   (public if >6h out; staff any time)
-CONFIRMED → NO_SHOW     (staff)
-CONFIRMED → CONFIRMED   (reschedule, same row, audited)
+—                     → HELD                    (slot selected, public)
+HELD                  → PENDING_VERIFICATION     (confirm form submitted: email, address, bKash TRXN)
+HELD                  → EXPIRED                  (10 min sweep)
+PENDING_VERIFICATION  → CONFIRMED                 (staff verifies the TRXN)
+PENDING_VERIFICATION  → CANCELLED                 (staff rejects the TRXN)
+PENDING_VERIFICATION  → EXPIRED                   (paymentVerificationHours sweep, default 24h)
+—                     → CONFIRMED                 (counter booking, staff — money already in hand)
+CONFIRMED             → COMPLETED                 (end time passed + checked in)
+CONFIRMED             → CANCELLED                 (public if >6h out; staff any time)
+CONFIRMED             → NO_SHOW                   (staff)
+CONFIRMED             → CONFIRMED                 (reschedule, same row, audited)
 ```
 Anything else: reject in the domain layer.
 

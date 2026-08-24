@@ -5,24 +5,30 @@
  *
  * Pure: no next/react/@prisma/client imports.
  */
-import { isPeakSlot, isWeekend, MAINTENANCE_SLOT, SLOTS_PER_DAY } from './slots';
+import { isNoonSlot, isPeakSlot, isWeekend, MAINTENANCE_SLOT, SLOTS_PER_DAY } from './slots';
 
-export const STANDARD_PRICE = 1200; // BDT, per 90-minute slot
-export const PEAK_PRICE = 1800; // evening peak, weekday
-export const WEEKEND_STANDARD_PRICE = 1500;
-export const WEEKEND_PEAK_PRICE = 2200;
+// Three price tiers × weekday/weekend (noon is flat, same price every day):
+//   NOON      09:00–15:00              — the cheapest, lowest-demand window
+//   AFTERNOON everything else non-peak — early morning + late evening/night
+//   NIGHT     16:30–23:00 (peak)       — highest-demand evening window
+export const NOON_PRICE = 2500; // BDT, per 90-minute slot, every day
+export const AFTERNOON_PRICE = 3000; // weekday
+export const WEEKEND_AFTERNOON_PRICE = 3500;
+export const NIGHT_PRICE = 3500; // weekday evening peak
+export const WEEKEND_NIGHT_PRICE = 4000;
 
 /** Default seed price for a slot. Maintenance slot gets a nominal 0 — never sold. */
 export function defaultSlotPrice(dayOfWeek: number, slotIndex: number): number {
   if (slotIndex === MAINTENANCE_SLOT) return 0;
+  if (isNoonSlot(slotIndex)) return NOON_PRICE;
 
   const weekend = isWeekend(dayOfWeekToSampleDate(dayOfWeek));
   const peak = isPeakSlot(slotIndex);
 
-  if (weekend && peak) return WEEKEND_PEAK_PRICE;
-  if (weekend) return WEEKEND_STANDARD_PRICE;
-  if (peak) return PEAK_PRICE;
-  return STANDARD_PRICE;
+  if (weekend && peak) return WEEKEND_NIGHT_PRICE;
+  if (weekend) return WEEKEND_AFTERNOON_PRICE;
+  if (peak) return NIGHT_PRICE;
+  return AFTERNOON_PRICE;
 }
 
 /**

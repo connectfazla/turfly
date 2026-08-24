@@ -4,6 +4,7 @@ import {
   BOOKABLE_SLOT_INDEXES,
   MAINTENANCE_SLOT,
   MINUTES_PER_DAY,
+  NOON_SLOT_INDEXES,
   PEAK_SLOT_INDEXES,
   SLOT_MINUTES,
   SLOTS_PER_DAY,
@@ -11,6 +12,7 @@ import {
   currentSlotIndex,
   hasSlotStarted,
   isMaintenanceSlot,
+  isNoonSlot,
   isPeakSlot,
   isValidSlotIndex,
   isWeekend,
@@ -177,6 +179,21 @@ describe('isPeakSlot', () => {
     expect(PEAK_SLOT_INDEXES).toEqual([11, 12, 13, 14]);
     for (const i of ALL_SLOT_INDEXES) {
       expect(isPeakSlot(i)).toBe(PEAK_SLOT_INDEXES.includes(i));
+    }
+  });
+});
+
+describe('isNoonSlot', () => {
+  it('matches exactly 09:00, 10:30, 12:00, 13:30', () => {
+    expect(NOON_SLOT_INDEXES).toEqual([6, 7, 8, 9]);
+    for (const i of ALL_SLOT_INDEXES) {
+      expect(isNoonSlot(i)).toBe(NOON_SLOT_INDEXES.includes(i));
+    }
+  });
+
+  it('noon and peak never overlap', () => {
+    for (const i of NOON_SLOT_INDEXES) {
+      expect(isPeakSlot(i)).toBe(false);
     }
   });
 });

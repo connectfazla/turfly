@@ -66,3 +66,29 @@ export function parseDateParam(param: string): Date | null {
 export function isValidReferenceFormat(reference: string): boolean {
   return /^TRF-\d{4}-\d{4}$/.test(reference);
 }
+
+/** Plain-language status for customer-facing screens (e.g.
+ * /booking/lookup) — a raw enum value like PENDING_VERIFICATION reads as
+ * a bug to someone who isn't staff. Falls back to the raw value for any
+ * status this hasn't been taught yet, so a new enum member never renders
+ * blank. */
+export function formatBookingStatus(status: string): string {
+  switch (status) {
+    case 'HELD':
+      return 'Reserved (not yet paid)';
+    case 'PENDING_VERIFICATION':
+      return 'Awaiting payment verification';
+    case 'CONFIRMED':
+      return 'Confirmed';
+    case 'COMPLETED':
+      return 'Completed';
+    case 'CANCELLED':
+      return 'Cancelled';
+    case 'EXPIRED':
+      return 'Expired';
+    case 'NO_SHOW':
+      return 'No-show';
+    default:
+      return status;
+  }
+}

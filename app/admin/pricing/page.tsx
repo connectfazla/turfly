@@ -1,43 +1,69 @@
 /**
  * ROUTE: /admin/pricing — ADMIN-only (CLAUDE.md §7, enforced by
- * middleware.ts AND re-checked inside updatePricingAction).
+ * middleware.ts AND re-checked inside updatePricingAction /
+ * updatePaymentSettingsAction).
  *
- * Prices are edited by category (weekday standard/peak, weekend
- * standard/peak), not per individual slot row - editing 112 SlotRule rows
- * one at a time isn't a realistic UI. Saving bulk-updates every matching
- * row in one transaction (app/actions/pricing.ts).
+ * Prices are edited by category (noon flat, weekday/weekend afternoon,
+ * weekday/weekend night), not per individual slot row - editing 112
+ * SlotRule rows one at a time isn't a realistic UI. Saving bulk-updates
+ * every matching row in one transaction (app/actions/pricing.ts). This
+ * page also owns the payment settings (bKash number, advance amount,
+ * verification window) — same "admin-only money config" reasoning.
  */
 import { prisma } from '@/lib/prisma';
-import { PEAK_SLOT_INDEXES } from '@/lib/slots';
+import { NOON_SLOT_INDEXES, PEAK_SLOT_INDEXES } from '@/lib/slots';
 import { PricingForm } from '@/components/admin/pricing-form';
+import { PaymentSettingsForm } from '@/components/admin/payment-settings-form';
 
 export const dynamic = 'force-dynamic';
 
-const NON_PEAK_SLOT = 0; // index 0 (00:00) is bookable and never peak
+const AFTERNOON_SAMPLE_SLOT = 0; // 00:00 — bookable, never noon or peak
 
 export default async function AdminPricingPage() {
-  const [standardRow, peakRow, weekendStandardRow, weekendPeakRow] = await Promise.all([
-    prisma.slotRule.findFirst({ where: { dayOfWeek: 1, slotIndex: NON_PEAK_SLOT } }),
+  const [noonRow, afternoonRow, weekendAfternoonRow, nightRow, weekendNightRow, venue] = await Promise.all([
+    prisma.slotRule.findFirst({ where: { dayOfWeek: 1, slotIndex: NOON_SLOT_INDEXES[0] } }),
+    prisma.slotRule.findFirst({ where: { dayOfWeek: 1, slotIndex: AFTERNOON_SAMPLE_SLOT } }),
+    prisma.slotRule.findFirst({ where: { dayOfWeek: 5, slotIndex: AFTERNOON_SAMPLE_SLOT } }),
     prisma.slotRule.findFirst({ where: { dayOfWeek: 1, slotIndex: PEAK_SLOT_INDEXES[0] } }),
-    prisma.slotRule.findFirst({ where: { dayOfWeek: 5, slotIndex: NON_PEAK_SLOT } }),
     prisma.slotRule.findFirst({ where: { dayOfWeek: 5, slotIndex: PEAK_SLOT_INDEXES[0] } }),
+    prisma.venueSetting.findUnique({ where: { id: 'singleton' } }),
   ]);
 
   return (
-    <div>
-      <h1 className="text-display text-text">Pricing</h1>
-      <p className="mt-1 text-body text-text-muted">
-        Prices apply by category across all matching slots. Not editable per row.
-      </p>
-      <div className="mt-6">
-        <PricingForm
-          current={{
-            standard: Number(standardRow?.price ?? 0),
-            peak: Number(peakRow?.price ?? 0),
-            weekendStandard: Number(weekendStandardRow?.price ?? 0),
-            weekendPeak: Number(weekendPeakRow?.price ?? 0),
-          }}
-        />
+    <div className="flex flex-col gap-10">
+      <div>
+        <h1 className="text-display text-text">Pricing</h1>
+        <p className="mt-1 text-body text-text-muted">
+          Prices apply by category across all matching slots. Not editable per row.
+        </p>
+        <div className="mt-6">
+          <PricingForm
+            current={{
+              noon: Number(noonRow?.price ?? 0),
+              afternoon: Number(afternoonRow?.price ?? 0),
+              weekendAfternoon: Number(weekendAfternoonRow?.price ?? 0),
+              night: Number(nightRow?.price ?? 0),
+              weekendNight: Number(weekendNightRow?.price ?? 0),
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="border-t border-border pt-8">
+        <h2 className="text-heading text-text">Payment settings</h2>
+        <p className="mt-1 text-body text-text-muted">
+          The bKash number customers send the advance to, how much that advance is, and how long an
+          unverified claim holds its slot before it auto-releases.
+        </p>
+        <div className="mt-6">
+          <PaymentSettingsForm
+            current={{
+              bkashNumber: venue?.bkashNumber ?? '',
+              advanceAmount: Number(venue?.advanceAmount ?? 1000),
+              paymentVerificationHours: venue?.paymentVerificationHours ?? 24,
+            }}
+          />
+        </div>
       </div>
     </div>
   );
