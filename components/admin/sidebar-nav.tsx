@@ -41,6 +41,40 @@ const ADMIN_LINKS: NavLink[] = [
   { href: '/admin/audit', label: 'Audit', icon: History },
 ];
 
+function isLinkActive(pathname: string, href: string): boolean {
+  // '/admin' would otherwise match every /admin/* route as a prefix.
+  return href === '/admin' ? pathname === '/admin' : pathname.startsWith(href);
+}
+
+function NavLinkItem({ link, active, vertical }: { link: NavLink; active: boolean; vertical: boolean }) {
+  const Icon = link.icon;
+  return (
+    <Link
+      href={link.href}
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        'group relative flex shrink-0 items-center gap-2.5 rounded-(--radius-input) px-2.5 py-1.5 text-body transition-colors',
+        active ? 'bg-accent-soft/60 font-medium text-accent' : 'text-text-muted hover:bg-surface-muted hover:text-text',
+      )}
+    >
+      {/* A thin left accent bar reads as "current page" without the
+       * heavier full-pill treatment - CLAUDE.md's "state is never colour-
+       * only" is still satisfied by aria-current + font-weight. */}
+      {vertical ? (
+        <span
+          className={cn(
+            'absolute -left-3 h-4 w-0.5 rounded-full bg-accent transition-opacity',
+            active ? 'opacity-100' : 'opacity-0',
+          )}
+          aria-hidden="true"
+        />
+      ) : null}
+      <Icon className="size-[18px] shrink-0" aria-hidden="true" strokeWidth={2} />
+      <span className={vertical ? undefined : 'text-caption'}>{link.label}</span>
+    </Link>
+  );
+}
+
 /** Shared by both the desktop sidebar and the mobile top nav - `vertical`
  * switches between a stacked icon+label list (sidebar) and a horizontal
  * icon-only-on-narrow scroller (mobile), same link set and active-state
@@ -49,29 +83,38 @@ const ADMIN_LINKS: NavLink[] = [
  * available in the Server Component layout around it. */
 export function SidebarNav({ isAdmin, vertical }: { isAdmin: boolean; vertical: boolean }) {
   const pathname = usePathname();
-  const links = isAdmin ? [...STAFF_LINKS, ...ADMIN_LINKS] : STAFF_LINKS;
 
+  // Grouped into "General" / "Admin" only for the vertical sidebar, where
+  // there's room for a group label - the horizontal mobile scroller stays
+  // one flat row, a group header would just eat space with nothing to say.
+  if (vertical && isAdmin) {
+    return (
+      <nav className="flex flex-col gap-4">
+        <div className="flex flex-col gap-0.5 pl-3">
+          {STAFF_LINKS.map((link) => (
+            <NavLinkItem key={link.href} link={link} active={isLinkActive(pathname, link.href)} vertical />
+          ))}
+        </div>
+        <div>
+          <p className="px-2.5 pb-1 pl-[26px] text-caption font-medium tracking-wide text-text-muted/80 uppercase">
+            Admin
+          </p>
+          <div className="flex flex-col gap-0.5 pl-3">
+            {ADMIN_LINKS.map((link) => (
+              <NavLinkItem key={link.href} link={link} active={isLinkActive(pathname, link.href)} vertical />
+            ))}
+          </div>
+        </div>
+      </nav>
+    );
+  }
+
+  const links = isAdmin ? [...STAFF_LINKS, ...ADMIN_LINKS] : STAFF_LINKS;
   return (
-    <nav className={cn('flex gap-1', vertical ? 'flex-col' : 'flex-row overflow-x-auto')}>
-      {links.map((link) => {
-        // '/admin' would otherwise match every /admin/* route as a prefix.
-        const isActive = link.href === '/admin' ? pathname === '/admin' : pathname.startsWith(link.href);
-        const Icon = link.icon;
-        return (
-          <Link
-            key={link.href}
-            href={link.href}
-            aria-current={isActive ? 'page' : undefined}
-            className={cn(
-              'flex shrink-0 items-center gap-3 rounded-(--radius-input) px-3 py-2 text-body transition-colors',
-              isActive ? 'bg-accent-soft text-accent font-medium' : 'text-text-muted hover:bg-surface-muted hover:text-text',
-            )}
-          >
-            <Icon className="size-5 shrink-0" aria-hidden="true" />
-            <span className={vertical ? undefined : 'text-caption'}>{link.label}</span>
-          </Link>
-        );
-      })}
+    <nav className={cn('flex gap-1', vertical ? 'flex-col gap-0.5 pl-3' : 'flex-row overflow-x-auto')}>
+      {links.map((link) => (
+        <NavLinkItem key={link.href} link={link} active={isLinkActive(pathname, link.href)} vertical={vertical} />
+      ))}
     </nav>
   );
 }

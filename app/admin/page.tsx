@@ -13,6 +13,7 @@
  * there's no cron in a project this size.
  */
 import Link from 'next/link';
+import { CalendarCheck, Wallet, TrendingUp, Clock3, Users2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { prisma } from '@/lib/prisma';
 import { dateOnly } from '@/lib/availability-service';
 import { sweepDueCompletions } from '@/lib/completion';
@@ -94,11 +95,11 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        <StatCard label="Today's bookings" value={String(todayBucket?.count ?? 0)} />
-        <StatCard label="Today's revenue" value={formatBDT(todayBucket?.revenue ?? 0)} />
-        <StatCard label="This month" value={String(monthReport.totalBookings)} />
-        <StatCard label="Awaiting payment" value={String(pendingVerificationCount)} />
-        <StatCard label="Total customers" value={String(totalCustomers)} />
+        <StatCard label="Today's bookings" value={String(todayBucket?.count ?? 0)} icon={CalendarCheck} />
+        <StatCard label="Today's revenue" value={formatBDT(todayBucket?.revenue ?? 0)} icon={Wallet} />
+        <StatCard label="This month" value={String(monthReport.totalBookings)} icon={TrendingUp} />
+        <StatCard label="Awaiting payment" value={String(pendingVerificationCount)} icon={Clock3} />
+        <StatCard label="Total customers" value={String(totalCustomers)} icon={Users2} />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -106,35 +107,38 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
           <h2 className="text-heading text-text">{isToday ? "Today's schedule" : formatDateLong(day)}</h2>
           {isToday ? <p className="mt-1 text-caption text-text-muted">{formatDateLong(day)}</p> : null}
         </div>
-        <div className="flex gap-2 text-caption">
+        <div className="flex items-center gap-1 text-caption">
           <Link
             href={`/admin?date=${formatDateParam(addDays(day, -1))}`}
-            className="rounded-(--radius-input) border border-border px-3 py-1.5 text-text hover:bg-surface-muted"
+            aria-label="Previous day"
+            className="flex size-8 items-center justify-center rounded-(--radius-input) text-text-muted transition-colors hover:bg-surface-muted hover:text-text"
           >
-            ← Prev day
+            <ChevronLeft className="size-4" aria-hidden="true" />
           </Link>
           <Link
             href="/admin"
-            className="rounded-(--radius-input) border border-border px-3 py-1.5 text-text hover:bg-surface-muted"
+            className="rounded-(--radius-input) px-3 py-1.5 font-medium text-text transition-colors hover:bg-surface-muted"
           >
             Today
           </Link>
           <Link
             href={`/admin?date=${formatDateParam(addDays(day, 1))}`}
-            className="rounded-(--radius-input) border border-border px-3 py-1.5 text-text hover:bg-surface-muted"
+            aria-label="Next day"
+            className="flex size-8 items-center justify-center rounded-(--radius-input) text-text-muted transition-colors hover:bg-surface-muted hover:text-text"
           >
-            Next day →
+            <ChevronRight className="size-4" aria-hidden="true" />
           </Link>
+          <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />
           <Link
             href="/admin/calendar"
-            className="rounded-(--radius-input) border border-border px-3 py-1.5 text-text hover:bg-surface-muted"
+            className="rounded-(--radius-input) px-3 py-1.5 font-medium text-text transition-colors hover:bg-surface-muted"
           >
             Calendar →
           </Link>
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-(--radius-card) border border-border">
+      <div className="overflow-hidden rounded-(--radius-card) border border-border bg-surface shadow-(--shadow-elevated)">
         {ALL_SLOT_INDEXES.map((index) => {
           const booking = bookingBySlot.get(index);
           const isCurrent = index === highlightIndex;
@@ -144,8 +148,8 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
             <div
               key={index}
               className={cn(
-                'flex flex-wrap items-center gap-3 border-b border-border px-4 py-3 last:border-b-0',
-                isCurrent && 'bg-accent-soft',
+                'flex flex-wrap items-center gap-3 border-b border-border px-4 py-3 transition-colors last:border-b-0',
+                isCurrent ? 'bg-accent-soft/60' : 'hover:bg-surface-muted',
               )}
             >
               <div className="w-28 shrink-0 text-body font-medium tabular-nums text-text">{slotLabel(index)}</div>

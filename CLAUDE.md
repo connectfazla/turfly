@@ -264,7 +264,7 @@ done yet; the counter is still a single global sequence.
 
 **Not started yet** (see the plan file for the full phase list): owner onboarding /
 venue provisioning, Clerk-based staff invites, `require-venue-role.ts`, venue-scoped
-`/dashboard/[venueId]/...` routes, `/v/[venueSlug]/...` public booking URLs,
+`/dashboard/[venueId]/...` routes, `{venueSlug}.turfly.<tld>` subdomain-per-venue public booking URLs (updated from an earlier path-based `/v/[venueSlug]/...` design — see the plan file's Routing Structure section),
 `/super-admin/*`, per-venue email branding. Explicit non-goals (deferred, not
 forgotten): platform billing/Stripe, a real payment gateway, subdomain-per-venue custom
 domains, real-time push notifications, multi-region/timezone support beyond
