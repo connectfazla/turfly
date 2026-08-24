@@ -414,6 +414,15 @@ suite once during development; the fix (log in once per file, loop routes inside
 than one test per route) is preserved in `e2e/accessibility-admin.spec.ts` as the pattern to
 follow for any future test file that needs an authenticated session.
 
+That bucket is now a `RateLimitBucket` database row, not an in-memory `Map` (see §15's production
+hardening) — it **persists across `next dev` restarts**, where the old in-memory version reset on
+every one. Running `pnpm e2e` (or logging in manually) more than ~10 times in a 15-minute local
+session will genuinely rate-limit yourself, and every subsequent login-based test will fail with a
+`waitForURL` timeout that has nothing to do with your code change. If that happens:
+```bash
+psql "$DATABASE_URL" -c "DELETE FROM \"RateLimitBucket\" WHERE key LIKE 'login%';"
+```
+
 ## 11. Getting started
 
 Requires Node 20.19+/22.12+/24+, `pnpm`, and a local PostgreSQL 16 (`docker-compose.yml` is

@@ -178,7 +178,11 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
                   </div>
                 </>
               ) : (
-                <div className="flex-1 text-body text-text-muted">Free</div>
+                // text-text, not text-muted, when this is the highlighted
+                // current slot: text-muted (#6B7280) on bg-accent-soft
+                // measures 4.4:1, just under WCAG AA's 4.5:1 - same fix as
+                // /admin/calendar's isToday cells.
+                <div className={cn('flex-1 text-body', isCurrent ? 'text-text' : 'text-text-muted')}>Free</div>
               )}
             </div>
           );

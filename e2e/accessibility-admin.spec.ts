@@ -17,6 +17,11 @@ const ADMIN_ROUTES = ['/admin', '/admin/calendar', '/admin/bookings', '/admin/bo
 const ADMIN_ONLY_ROUTES = ['/admin/pricing', '/admin/reports', '/admin/users', '/admin/audit'];
 
 test('admin panel routes have no critical or serious axe violations (ADMIN session)', async ({ page }) => {
+  // 10 routes x (page load + full axe scan) in one test, by design (see
+  // the file header) — the default 30s budget was already tight before
+  // the left-sidebar layout added more DOM to every one of those scans.
+  test.setTimeout(90_000);
+
   await page.goto('/login');
   await page.getByLabel('Email').fill('admin@turf.local');
   await page.getByLabel('Password').fill(process.env.SEED_ADMIN_PASSWORD ?? 'Admin123!');
