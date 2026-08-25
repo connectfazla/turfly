@@ -98,6 +98,7 @@ export async function holdSlotAction(input: HoldSlotFormInput): Promise<ActionRe
     const parsed = holdSlotSchema.parse(input);
     const booking = await holdSlot({
       venueId,
+      fieldId: parsed.fieldId,
       date: badDate(parsed.date),
       slotIndex: parsed.slotIndex,
       phone: parsed.phone,

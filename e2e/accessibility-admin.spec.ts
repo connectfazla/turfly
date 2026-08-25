@@ -49,7 +49,10 @@ async function seedFixture() {
         rulesText: 'e2e fixture — not a real venue.',
       },
     });
-    await seedSlotRulesForVenue(prisma, venue.id);
+    const field = await prisma.field.create({
+      data: { venueId: venue.id, name: venue.name, sportName: 'Football' },
+    });
+    await seedSlotRulesForVenue(prisma, venue.id, field.id);
   }
 }
 
@@ -57,6 +60,7 @@ async function teardownFixture() {
   const venue = await prisma.venue.findUnique({ where: { slug: FIXTURE_SLUG } });
   if (venue) {
     await prisma.slotRule.deleteMany({ where: { venueId: venue.id } });
+    await prisma.field.deleteMany({ where: { venueId: venue.id } });
     await prisma.venue.delete({ where: { id: venue.id } });
     await prisma.tenant.delete({ where: { id: venue.tenantId } });
   }

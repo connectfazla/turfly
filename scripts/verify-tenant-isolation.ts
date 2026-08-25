@@ -18,6 +18,7 @@
  * Exits non-zero on any failure so it can gate a deploy.
  */
 import { PrismaClient } from '@prisma/client';
+import { getDefaultFieldId } from '../lib/field';
 
 const prisma = new PrismaClient();
 
@@ -97,10 +98,12 @@ async function main() {
       update: {},
       create: { phone: '01900000001', fullName: 'Isolation Fixture', address: 'n/a' },
     });
+    const testVenueFieldId = await getDefaultFieldId(prisma, testVenue.id);
     const foreign = await prisma.booking.create({
       data: {
         reference: `TRF-ISO-${Date.now()}`,
         venueId: testVenue.id,
+        fieldId: testVenueFieldId,
         tenantId: testVenue.tenantId,
         customerId: customer.id,
         date: new Date('2030-01-01'),

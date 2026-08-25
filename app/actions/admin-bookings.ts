@@ -22,6 +22,7 @@ import {
 } from '@/lib/booking-engine';
 import { ForbiddenError, requireRole } from '@/lib/auth/require-role';
 import { prisma } from '@/lib/prisma';
+import { getDefaultFieldId } from '@/lib/field';
 import { parseDateParam } from '@/lib/format';
 import {
   cancelStaffSchema,
@@ -111,6 +112,12 @@ export async function createCounterBookingAction(
       // person taking it works, and staff.venueId is already validated
       // against their real grants by requireRole().
       venueId: staff.venueId,
+      // Counter bookings go on the venue's default field until
+      // components/admin/counter-booking-form.tsx grows a field picker —
+      // a deliberate, documented gap (CLAUDE.md §11), not a silent one:
+      // every venue with exactly one field (still nearly all of them) sees
+      // zero change here.
+      fieldId: await getDefaultFieldId(prisma, staff.venueId),
       date: badDate(parsed.date),
       slotIndex: parsed.slotIndex,
       phone: parsed.phone,

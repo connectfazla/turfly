@@ -4,18 +4,26 @@ import { fetchDayAvailability } from '@/lib/availability-service';
 import { prisma } from '@/lib/prisma';
 import { bookingWindowDates } from '@/lib/booking-window';
 import { formatDateParam, formatDateShort } from '@/lib/format';
+import { getRequestVenueId } from '@/lib/request-venue';
 
 export interface DateStripProps {
   selected: string; // yyyy-MM-dd
+  /** Which field's free-slot counts to show, and which field to carry
+   * forward when a day is picked (multi-field pass). */
+  fieldId: string;
 }
 
 /** 14 days, free-slot counts (BUILD_PLAN.md step 4) — reuses the same
  * fetchDayAvailability() as the slot grid and the JSON API. */
-export async function DateStrip({ selected }: DateStripProps) {
+export async function DateStrip({ selected, fieldId }: DateStripProps) {
   const now = new Date();
+  // Resolved from the request host, same as every other public booking
+  // route — omitting this made every venue's date strip read Venue Zero's
+  // free-slot counts regardless of subdomain.
+  const venueId = await getRequestVenueId();
   const days = await Promise.all(
     bookingWindowDates(now).map(async (date) => {
-      const { slots } = await fetchDayAvailability(prisma, date, now);
+      const { slots } = await fetchDayAvailability(prisma, date, now, undefined, venueId, fieldId);
       return {
         param: formatDateParam(date),
         label: formatDateShort(date),
@@ -31,7 +39,7 @@ export async function DateStrip({ selected }: DateStripProps) {
         return (
           <Link
             key={day.param}
-            href={`/book/${day.param}`}
+            href={`/book/${day.param}?field=${fieldId}`}
             aria-current={isSelected ? 'date' : undefined}
             className={cn(
               'flex min-w-[92px] shrink-0 flex-col items-center gap-0.5 rounded-(--radius-card) border px-3 py-2 text-center transition-colors',

@@ -11,6 +11,7 @@ import { revalidatePath } from 'next/cache';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { dateOnly } from '@/lib/availability-service';
+import { getDefaultFieldId } from '@/lib/field';
 import { requireRole } from '@/lib/auth/require-role';
 import { parseDateParam } from '@/lib/format';
 import { slotLabel, type SlotIndex } from '@/lib/slots';
@@ -47,12 +48,18 @@ export async function previewBlackoutImpactAction(input: {
     const date = parseDateParam(input.date);
     if (!date) throw new Error('Invalid date');
     const day = dateOnly(date);
+    // Same default-field fallback createBlackoutAction below uses — this
+    // preview must scope by the exact field the blackout will actually
+    // land on, not the whole venue, or it warns about bookings on fields
+    // the blackout would never touch.
+    const fieldId = await getDefaultFieldId(prisma, staff.venueId);
 
     // venueId is not optional here: this returns customer NAMES, so without
     // it a blackout preview at one venue listed other tenants' customers.
     const bookings = await prisma.booking.findMany({
       where: {
         venueId: staff.venueId,
+        fieldId,
         date: day,
         status: { in: ['HELD', 'CONFIRMED', 'COMPLETED'] },
         ...(input.slotIndex !== '' ? { slotIndex: input.slotIndex } : {}),
@@ -93,10 +100,22 @@ export async function createBlackoutAction(
     // right — for a new blackout to close the intended venue's slot rather
     // than someone else's.
     const { venueId } = staff;
+    // Defaults to the venue's default field until admin/blackouts grows a
+    // field picker — same documented gap as the counter-booking form
+    // (CLAUDE.md §11): a single-field venue (still nearly all of them)
+    // sees zero change.
+    const fieldId = await getDefaultFieldId(prisma, venueId);
 
     const blackout = await prisma.$transaction(async (tx) => {
       const created = await tx.blackout.create({
-        data: { date: day, slotIndex: parsed.slotIndex, reason: parsed.reason, createdById: staff.id, venueId },
+        data: {
+          date: day,
+          slotIndex: parsed.slotIndex,
+          reason: parsed.reason,
+          createdById: staff.id,
+          venueId,
+          fieldId,
+        },
       });
       await tx.auditLog.create({
         data: {

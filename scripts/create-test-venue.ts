@@ -23,7 +23,7 @@
  * booking exists under it.
  */
 import { PrismaClient } from '@prisma/client';
-import { seedSlotRulesForVenue, SLOT_RULES_PER_VENUE } from '../lib/provisioning';
+import { ensureDefaultField, seedSlotRulesForVenue, SLOT_RULES_PER_VENUE } from '../lib/provisioning';
 
 const prisma = new PrismaClient();
 
@@ -54,6 +54,7 @@ async function destroy() {
     prisma.blackout.deleteMany({ where: { venueId: venue.id } }),
     prisma.venueStaff.deleteMany({ where: { venueId: venue.id } }),
     prisma.auditLog.deleteMany({ where: { venueId: venue.id } }),
+    prisma.field.deleteMany({ where: { venueId: venue.id } }),
     prisma.venue.delete({ where: { id: venue.id } }),
     prisma.tenant.delete({ where: { id: venue.tenantId } }),
   ]);
@@ -95,7 +96,8 @@ async function create() {
     console.log(`Venue "${TEST_VENUE_SLUG}" already exists (${venue.id}) — reusing.`);
   }
 
-  const created = await seedSlotRulesForVenue(prisma, venue.id);
+  const fieldId = await ensureDefaultField(prisma, venue.id, venue.name);
+  const created = await seedSlotRulesForVenue(prisma, venue.id, fieldId);
   const total = await prisma.slotRule.count({ where: { venueId: venue.id } });
   console.log(`SlotRule: ${created} created this run, ${total}/${SLOT_RULES_PER_VENUE} total for this venue.`);
 

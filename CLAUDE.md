@@ -25,7 +25,7 @@ A single Next.js app with two surfaces over one database:
 - **Admin panel** — `/admin/*`, sign-in required. Roles are venue-scoped `OWNER | MANAGER | BOOKIE` — see §11.
 - **Platform panel** — `/super-admin/*`, for the platform operator only. Issues the registration codes without which nobody can register a business.
 
-One football field, one venue, open 24 hours, as of the original university project. §11 covers what multi-venue changes.
+One football field, one venue, open 24 hours, as of the original university project. §11 covers what multi-venue and multi-field change.
 
 ---
 
@@ -95,7 +95,7 @@ asserts both.
 
 ## 5. Data model
 
-Seven entities from the original single-venue app: `User` (staff only), `Customer` (public, keyed by phone), `Booking`, `SlotRule`, `Blackout`, `Payment`, `AuditLog`. Four more added by the multi-tenant conversion: `Tenant`, `Venue`, `VenueStaff`, `PlatformAdmin` — see §11. `VenueSetting` (the old single global settings row) no longer exists — its fields live on `Venue` now.
+Seven entities from the original single-venue app: `User` (staff only), `Customer` (public, keyed by phone), `Booking`, `SlotRule`, `Blackout`, `Payment`, `AuditLog`. Four more added by the multi-tenant conversion: `Tenant`, `Venue`, `VenueStaff`, `PlatformAdmin` — see §11. `VenueSetting` (the old single global settings row) no longer exists — its fields live on `Venue` now. One more added by the multi-field/multi-sport conversion: `Field` — see §11.
 
 Customers are **not** Users. They never authenticate. Customer stays global (not venue-scoped) even after §11's conversion — see §11's tenancy section for why.
 
@@ -173,13 +173,13 @@ booking flow.
 
 ```
 Public    /  /book  /book/[date]  /book/confirm  /book/success/[ref]
-          /booking/lookup  /rules
+          /booking/lookup  /rules  /demo
 Auth      /sign-in  /sign-up  /verify-email  /forgot-password
-          /reset-password  /accept-invite
+          /reset-password  /accept-invite  /onboarding  /select-venue
 Staff     /admin  /admin/calendar  /admin/bookings
           /admin/bookings/[id]  /admin/bookings/new
           /admin/blackouts  /admin/customers
-Owner     /admin/pricing  /admin/staff
+Owner     /admin/pricing  /admin/branding  /admin/staff
 Owner+Mgr /admin/reports  /admin/audit  /admin/customers
 Operator  /super-admin  /super-admin/codes  /super-admin/tenants
 ```
@@ -187,6 +187,15 @@ Operator  /super-admin  /super-admin/codes  /super-admin/tenants
 Every venue is also served at `{slug}.turfly.xyz` — the same public pages,
 resolved by host via `lib/request-venue.ts`. The bare domain serves the
 marketing site and Venue Zero's booking pages.
+
+`/select-venue` is where a staff member with more than one accessible venue
+and no `turfly_venue` cookie yet picks one — `/admin`'s layout redirects
+there on `VenueNotSelectedError` rather than dead-ending (see §11).
+
+`/book` skips straight to `/book/[date]` for a venue with exactly one active
+Field (still nearly every venue); a venue with more than one shows a field
+picker first (`components/booking/field-picker.tsx`) — see §11's multi-field
+section.
 
 `scripts/verify-role-matrix.ts` checks the role table above against the actual
 `requireRole(...)` calls. Run it after touching any guard.
@@ -249,8 +258,10 @@ protect a Server Action.
 
 ## 11. Multi-tenant SaaS conversion
 
-**Status:** Stages 1-4 and 6 shipped. Full plan, reasoning, and remaining stages:
-`~/.claude/plans/sprightly-wobbling-kahn.md` — read it before starting a new stage.
+**Status:** All 9 original stages shipped, including the venue-picker
+(`/select-venue`), owner-uploaded branding (`/admin/branding`), and the
+multi-field/multi-sport pass described below. `~/.claude/plans/sprightly-
+wobbling-kahn.md` carries the history of each pass's own plan and reasoning.
 
 **Authentication and authorization are both ours.** There is no identity provider.
 `requireRole()` resolves a session (`lib/auth/session.ts`), then reads
@@ -311,10 +322,41 @@ errors when tested against it directly.
 First platform admin on a fresh database: sign up at `/sign-up`, then
 `pnpm exec tsx scripts/grant-platform-admin.ts you@example.com`.
 
-**Not done yet:** `/dashboard/[venueId]` (a multi-venue owner currently has no venue
-picker — `/admin` shows "Choose a venue" and stops); per-venue email branding; the
-wildcard DNS record and Vercel wildcard domain that subdomain routing needs in
-production (README documents both).
+**Multi-field / multi-sport.** A Venue can have more than one `Field` — two football
+pitches and a badminton court is one Venue, three Fields. Each Field gets its own
+`SlotRule` price/bookability grid, its own `Booking`s, its own `Blackout`s. Fields
+share the ONE system-wide slot grid in `lib/slots.ts` (90-minute slots, 16/day) — a
+Field chooses its price and which slots are open, **not** how long a slot is.
+Owner-defined slot *duration* per field is an explicit non-goal (see below).
+
+`Field.sportName` is free text ("Football", "Badminton", "Cricket nets") — deliberately
+not a constrained enum, so an owner is never blocked by a sport this app's authors
+didn't anticipate. Every Venue always has at least one active Field
+(`lib/field.ts`'s `getDefaultFieldId()` throws otherwise) — `lib/provisioning.ts`
+creates one for every new venue, and `scripts/backfill-fields.ts` did it once for
+every venue that predated this pass.
+
+The partial unique index (§2) is keyed on `("venueId", "fieldId", date, "slotIndex")`
+— a booking on the football pitch and a booking on the badminton court, same venue,
+same date, same slot index, are two independent live bookings, not a collision.
+`e2e/concurrency.spec.ts` asserts this as a third property alongside the original two
+(one winner within a field; two venues don't block each other).
+
+`fieldId` is threaded explicitly through the public booking flow (a URL/form value,
+same shape `date` already has) and through every `lib/booking-engine.ts` write path.
+Staff-side surfaces that don't yet have a field switcher (the admin dashboard's day
+timeline, `/admin/calendar`, the counter-booking form, blackout creation) default to
+the venue's first active field via `getDefaultFieldId()` — a deliberate, documented
+gap: a venue with exactly one field (still nearly all of them) sees zero change, and
+a venue with more sees its first field until those surfaces grow a picker. Pricing
+does NOT get this treatment — `/admin/pricing` has a real field selector, because
+silently bulk-pricing every field at once from one form would have been a correctness
+bug, not just a missing convenience.
+
+**Not done yet:** owner-defined slot duration per field (explicit non-goal above); a
+field switcher on the admin dashboard/calendar/counter-booking form/blackouts (see
+above); the wildcard DNS record and Vercel wildcard domain that subdomain routing
+needs in production (README documents both).
 
 **Explicit non-goals:** platform billing/Stripe, a real payment gateway, real-time push
-notifications, multi-region beyond `Asia/Dhaka`.
+notifications, multi-region beyond `Asia/Dhaka`, owner-defined slot duration per field.

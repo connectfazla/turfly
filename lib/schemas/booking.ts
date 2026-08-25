@@ -65,6 +65,11 @@ export function optionalText(max: number) {
 export const holdSlotSchema = z.object({
   date: dateParamSchema,
   slotIndex: slotIndexSchema,
+  /** Which of the venue's fields — multi-field pass. Always sent by the
+   * client: components/booking/field-picker.tsx resolves it even for a
+   * single-field venue (no picker shown), so the server never has to
+   * guess. */
+  fieldId: z.string().min(1, 'Missing field'),
   phone: phoneSchema,
   fullName: fullNameSchema,
 });

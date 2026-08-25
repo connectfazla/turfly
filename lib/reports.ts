@@ -106,7 +106,7 @@ export async function buildReport(
   const priorFrom = new Date(priorTo);
   priorFrom.setUTCDate(priorFrom.getUTCDate() - (rangeLength - 1));
 
-  const [bookings, priorBookings, noShowCount] = await Promise.all([
+  const [bookings, priorBookings, noShowCount, fieldCount] = await Promise.all([
     prisma.booking.findMany({
       where: { venueId, date: { gte: rangeFrom, lte: rangeTo }, status: { in: [...REVENUE_STATUSES] } },
       include: { customer: true },
@@ -117,6 +117,12 @@ export async function buildReport(
       select: { amountPaid: true },
     }),
     prisma.booking.count({ where: { venueId, date: { gte: rangeFrom, lte: rangeTo }, status: 'NO_SHOW' } }),
+    // Multi-field pass: revenue and booking counts are correct sums across
+    // every field at this venue (a venue-wide report SHOULD add them up),
+    // but utilizationPercent's denominator below is capacity, and capacity
+    // scales with how many fields there are — a two-field venue fully
+    // booked on both would otherwise read as 200% utilized.
+    prisma.field.count({ where: { venueId, isActive: true } }),
   ]);
 
   const totalRevenue = bookings.reduce((sum, b) => sum + Number(b.amountPaid), 0);
@@ -145,8 +151,12 @@ export async function buildReport(
     if (cell) cell.count += 1;
   }
 
+  // At least 1 even if a venue somehow has zero active fields (shouldn't
+  // happen — see lib/field.ts's doc comment — but dividing by zero here
+  // would be worse than a momentarily-wrong percentage).
+  const capacityFields = Math.max(1, fieldCount);
   const utilizationPercent =
-    rangeLength > 0 ? (bookings.length / (rangeLength * BOOKABLE_SLOT_INDEXES.length)) * 100 : 0;
+    rangeLength > 0 ? (bookings.length / (rangeLength * BOOKABLE_SLOT_INDEXES.length * capacityFields)) * 100 : 0;
 
   return {
     from: rangeFrom,

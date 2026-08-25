@@ -15,6 +15,7 @@ import {
 } from './availability';
 import type { SlotView } from './slots';
 import { getDefaultVenueId } from './tenant';
+import { getDefaultFieldId } from './field';
 
 /** Accepts either the top-level Prisma client or a transaction client, so
  * the booking engine can call this from inside a transaction and everyone
@@ -62,6 +63,15 @@ export function dateOnly(d: Date): Date {
  * to clean this up into a proper options object - CLAUDE.md §4 still
  * applies either way: this stays the ONE function that computes
  * availability, never a second implementation.
+ *
+ * `fieldId`, same shape one layer down (added in the multi-field pass):
+ * omitted, it resolves to lib/field.ts's getDefaultFieldId() for whichever
+ * venue was resolved above - a venue's first active field. Every REAL call
+ * site as of this pass passes an explicit fieldId (the public booking flow
+ * threads it through the URL/hold, the booking engine threads it through
+ * every *Input interface) — this fallback exists for the same reason
+ * venueId's does: so nothing that isn't touched in this pass is forced to
+ * change just to keep compiling.
  */
 export async function fetchDayAvailability(
   db: DbClient,
@@ -69,21 +79,23 @@ export async function fetchDayAvailability(
   now: Date,
   excludeBookingId?: string,
   venueId?: string,
+  fieldId?: string,
 ): Promise<DayAvailabilityResult> {
   const day = dateOnly(date);
   const dayOfWeek = day.getDay();
   const resolvedVenueId = venueId ?? (await getDefaultVenueId());
+  const resolvedFieldId = fieldId ?? (await getDefaultFieldId(db, resolvedVenueId));
 
   const [slotRules, bookings, blackouts] = await Promise.all([
-    db.slotRule.findMany({ where: { dayOfWeek, venueId: resolvedVenueId } }),
+    db.slotRule.findMany({ where: { dayOfWeek, fieldId: resolvedFieldId } }),
     db.booking.findMany({
       where: {
         date: day,
-        venueId: resolvedVenueId,
+        fieldId: resolvedFieldId,
         id: excludeBookingId ? { not: excludeBookingId } : undefined,
       },
     }),
-    db.blackout.findMany({ where: { date: day, venueId: resolvedVenueId } }),
+    db.blackout.findMany({ where: { date: day, fieldId: resolvedFieldId } }),
   ]);
 
   const availabilitySlotRules: AvailabilitySlotRule[] = slotRules.map((r) => ({

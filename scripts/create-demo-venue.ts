@@ -155,6 +155,36 @@ async function ensureTenantAndVenue(ownerUserId: string) {
   return venue;
 }
 
+/**
+ * IDEMPOTENT: the demo venue's two fields — a primary football pitch (all
+ * of the rich booking/payment/blackout history below lives on this one,
+ * unchanged from before the multi-field pass) and a second, lightly-seeded
+ * badminton court (its own live price grid, deliberately no booking
+ * history) so a visitor sees the headline "add another field" capability
+ * for real, not just described on the landing page. Doubling the booking
+ * generator's realism onto a second field is a bigger rewrite than this
+ * pass's demo needs — "here's a freshly added field, ready to take
+ * bookings" is itself a fine, honest sales story.
+ */
+async function ensureFields(venueId: string, venueName: string) {
+  const existing = await prisma.field.findMany({
+    where: { venueId },
+    orderBy: { sortOrder: 'asc' },
+    select: { id: true, sportName: true },
+  });
+
+  const primary =
+    existing.find((f) => f.sportName === 'Football') ??
+    (await prisma.field.create({ data: { venueId, name: venueName, sportName: 'Football', sortOrder: 0 } }));
+  const secondary =
+    existing.find((f) => f.sportName === 'Badminton') ??
+    (await prisma.field.create({
+      data: { venueId, name: 'Court B', sportName: 'Badminton', sortOrder: 1 },
+    }));
+
+  return { primaryFieldId: primary.id, secondaryFieldId: secondary.id };
+}
+
 async function ensureStaffGrants(venueId: string, tenantId: string, manager: { id: string }, bookie: { id: string }) {
   await prisma.venueStaff.upsert({
     where: { venueId_userId: { venueId, userId: manager.id } },
@@ -206,6 +236,10 @@ async function wipe(venueId: string) {
 
 interface SeedContext {
   venueId: string;
+  /** The primary (football) field — every seeded booking/blackout below
+   * lives here. See ensureFields()'s doc comment for why the second field
+   * stays booking-free. */
+  fieldId: string;
   tenantId: string;
   owner: { id: string };
   manager: { id: string };
@@ -260,6 +294,7 @@ async function seedBooking(
     data: {
       reference: nextRef(ctx.now),
       venueId: ctx.venueId,
+      fieldId: ctx.fieldId,
       tenantId: ctx.tenantId,
       customerId: customer.id,
       date,
@@ -368,6 +403,7 @@ async function seedBlackout(ctx: SeedContext) {
   await prisma.blackout.create({
     data: {
       venueId: ctx.venueId,
+      fieldId: ctx.fieldId,
       date: day,
       slotIndex: null, // whole day
       reason: 'Ground maintenance — resurfacing the goal areas.',
@@ -387,8 +423,12 @@ async function seedBlackout(ctx: SeedContext) {
   });
 }
 
-async function buildSlotPriceIndex(venueId: string): Promise<Map<string, number>> {
-  const rules = await prisma.slotRule.findMany({ where: { venueId } });
+async function buildSlotPriceIndex(fieldId: string): Promise<Map<string, number>> {
+  // Field-scoped, not venue-scoped (multi-field pass) — with two fields
+  // sharing this venue, a venueId-only query would mix both fields' rows
+  // into one (dayOfWeek, slotIndex) map and silently overwrite one field's
+  // prices with the other's.
+  const rules = await prisma.slotRule.findMany({ where: { fieldId } });
   const map = new Map<string, number>();
   for (const r of rules) map.set(`${r.dayOfWeek}:${r.slotIndex}`, Number(r.price));
   return map;
@@ -402,6 +442,7 @@ async function main() {
 
   const accounts = await ensureAccounts();
   const venue = await ensureTenantAndVenue(accounts.OWNER.id);
+  const { primaryFieldId, secondaryFieldId } = await ensureFields(venue.id, DEMO_VENUE_NAME);
   await ensureStaffGrants(venue.id, venue.tenantId, accounts.MANAGER, accounts.BOOKIE);
   const customers = await ensureCustomers();
 
@@ -410,17 +451,27 @@ async function main() {
     console.log('  Cleared existing bookings, payments, blackouts, audit log and price grid.');
   }
 
-  const existingRules = await prisma.slotRule.count({ where: { venueId: venue.id } });
-  if (existingRules === 0) {
-    const createdRules = await seedSlotRulesForVenue(prisma, venue.id);
-    console.log(`  SlotRule: ${createdRules}/${SLOT_RULES_PER_VENUE} rows seeded.`);
-  }
+  // Unconditional, not gated on "does the venue have any rules yet" — that
+  // check was fine when a venue had one field, but Court B (added this
+  // pass) would need its OWN 112 rows even on a venue whose PRIMARY field
+  // already has all of its rules, and a venue-wide count can't tell the
+  // difference. seedSlotRulesForVenue's skipDuplicates makes calling it
+  // for an already-seeded field a safe no-op either way.
+  const [primaryRules, secondaryRules] = await Promise.all([
+    seedSlotRulesForVenue(prisma, venue.id, primaryFieldId),
+    seedSlotRulesForVenue(prisma, venue.id, secondaryFieldId),
+  ]);
+  console.log(
+    `  SlotRule: ${primaryRules}/${SLOT_RULES_PER_VENUE} rows seeded for Green Pitch Arena, ` +
+      `${secondaryRules}/${SLOT_RULES_PER_VENUE} for Court B.`,
+  );
 
   const existingBookings = await prisma.booking.count({ where: { venueId: venue.id } });
   if (existingBookings === 0) {
-    const slotPrice = await buildSlotPriceIndex(venue.id);
+    const slotPrice = await buildSlotPriceIndex(primaryFieldId);
     const ctx: SeedContext = {
       venueId: venue.id,
+      fieldId: primaryFieldId,
       tenantId: venue.tenantId,
       owner: accounts.OWNER,
       manager: accounts.MANAGER,
@@ -444,6 +495,7 @@ async function main() {
   console.log(
     `\nDemo ready.\n` +
       `  Dashboard:  /demo  (pick Owner / Manager / Bookie — no password)\n` +
+      `  Fields:     Green Pitch Arena (football, full booking history) + Court B (badminton, freshly added)\n` +
       `  Public site: http://demo.lvh.me:3000/book   (local)\n` +
       `               https://demo.turfly.xyz/book   (once the wildcard domain is live)\n` +
       `\nRe-run with --reset before a live walkthrough to start from a clean state.`,

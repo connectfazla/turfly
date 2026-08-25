@@ -431,6 +431,10 @@ export interface HoldSlotInput {
    * getDefaultVenueId(), which meant every hold — including one placed on
    * another venue's public page — landed on Venue Zero. */
   venueId: string;
+  /** REQUIRED. Which of the venue's fields — multi-field pass. The
+   * customer chose this on components/booking/field-picker.tsx (or it was
+   * the venue's sole field, resolved automatically with no picker shown). */
+  fieldId: string;
   date: Date;
   slotIndex: number;
   phone: string;
@@ -446,12 +450,12 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
   const now = input.now ?? new Date();
   const slotIndex = input.slotIndex as SlotIndex;
 
-  const { venueId } = input;
+  const { venueId, fieldId } = input;
 
   return runSerializable(async (tx) => {
     await sweepExpiredHolds(tx, now);
 
-    const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now, undefined, venueId);
+    const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now, undefined, venueId, fieldId);
     const slot = slots.find((s) => s.index === slotIndex)!;
     assertSlotBookable(slot);
 
@@ -463,6 +467,14 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
       where: { id: venueId },
       select: { tenantId: true, code: true, holdMinutes: true },
     });
+
+    // The field genuinely belongs to this venue - a forged/stale fieldId
+    // from another venue would otherwise hold a slot against a grid that
+    // has nothing to do with the venue the customer thinks they're on.
+    const field = await tx.field.findUniqueOrThrow({ where: { id: fieldId }, select: { venueId: true } });
+    if (field.venueId !== venueId) {
+      throw new SlotNotBookableError('This field does not belong to that venue.');
+    }
 
     const customer = await upsertCustomer(tx, { phone: input.phone, fullName: input.fullName });
     const holdExpiresAt = new Date(now.getTime() + (venue.holdMinutes ?? DEFAULT_HOLD_MINUTES) * 60_000);
@@ -480,6 +492,7 @@ export async function holdSlot(input: HoldSlotInput): Promise<Booking> {
         priceAmount: price,
         source: 'ONLINE',
         venueId,
+        fieldId,
         tenantId: venue.tenantId,
       },
     });
@@ -522,6 +535,8 @@ export interface CreateFreshBookingInput extends CreateBookingCommon {
   holdId?: undefined;
   /** REQUIRED — which venue this booking belongs to. See HoldSlotInput. */
   venueId: string;
+  /** REQUIRED — which of the venue's fields. See HoldSlotInput. */
+  fieldId: string;
   phone: string;
   fullName: string;
   /** Counter bookings (staff, source COUNTER) skip the 2-active-booking
@@ -675,10 +690,18 @@ async function createFreshConfirmedBooking(
   slotIndex: SlotIndex,
   source: BookingSource,
 ): Promise<Booking> {
-  const { venueId } = input;
-  const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now, undefined, venueId);
+  const { venueId, fieldId } = input;
+  const { day, ruleByIndex, slots } = await fetchDayAvailability(tx, input.date, now, undefined, venueId, fieldId);
   const slot = slots.find((s) => s.index === slotIndex)!;
   assertSlotBookable(slot);
+
+  // Same forged/stale-fieldId guard as holdSlot() — a counter booking form
+  // that somehow submitted another venue's field must not silently attach
+  // to it.
+  const field = await tx.field.findUniqueOrThrow({ where: { id: fieldId }, select: { venueId: true } });
+  if (field.venueId !== venueId) {
+    throw new SlotNotBookableError('This field does not belong to that venue.');
+  }
 
   const customer = await upsertCustomer(tx, {
     phone: input.phone,
@@ -716,6 +739,7 @@ async function createFreshConfirmedBooking(
       createdById: input.createdById ?? null,
       customerNote: input.note ?? null,
       venueId,
+      fieldId,
       tenantId: venue.tenantId,
     },
   });
@@ -815,19 +839,22 @@ export async function rescheduleBooking(input: RescheduleBookingInput): Promise<
       throw new InvalidTransitionError(`Cannot reschedule a booking with status ${booking.status}.`);
     }
 
-    // Availability MUST be read against the booking's own venue, not the
-    // default one. Omitting this argument made fetchDayAvailability fall
-    // back to getDefaultVenueId(), so rescheduling any non-default venue's
-    // booking validated the new slot against Venue Zero's calendar — it
-    // could move a booking onto a slot already taken at its real venue, or
-    // refuse a slot that was actually free. Harmless while one venue
-    // exists; a double-booking the moment a second one does.
+    // Availability MUST be read against the booking's own venue AND field,
+    // not a default. Omitting these arguments made fetchDayAvailability
+    // fall back to getDefaultVenueId()/getDefaultFieldId(), so rescheduling
+    // any booking not on the venue's default field validated the new slot
+    // against the WRONG field's calendar — it could move a booking onto a
+    // slot already taken on its real field, or refuse a slot that was
+    // actually free there. A reschedule always stays on the same field —
+    // moving a football booking onto the badminton court isn't a
+    // reschedule, it's a different booking.
     const { day, ruleByIndex, slots } = await fetchDayAvailability(
       tx,
       input.newDate,
       now,
       booking.id,
       booking.venueId ?? undefined,
+      booking.fieldId,
     );
     const slot = slots.find((s) => s.index === newSlotIndex)!;
     assertSlotBookable(slot);

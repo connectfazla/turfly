@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-export function PricingForm({ current }: { current: PricingFormInput }) {
+export function PricingForm({ fieldId, current }: { fieldId: string; current: PricingFormInput }) {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -18,12 +18,13 @@ export function PricingForm({ current }: { current: PricingFormInput }) {
   const form = useForm<PricingFormInput>({
     resolver: zodResolver(pricingSchema),
     defaultValues: current,
+    values: current,
   });
 
   async function onSubmit(values: PricingFormInput) {
     setServerError(null);
     setSaved(false);
-    const result = await updatePricingAction(values);
+    const result = await updatePricingAction(fieldId, values);
     if (!result.ok) {
       setServerError(result.error);
       return;

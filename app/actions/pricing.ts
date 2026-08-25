@@ -10,7 +10,7 @@
 import { revalidatePath } from 'next/cache';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { requireRole } from '@/lib/auth/require-role';
+import { ForbiddenError, requireRole } from '@/lib/auth/require-role';
 import {
   paymentSettingsSchema,
   pricingSchema,
@@ -41,41 +41,52 @@ function fail(error: unknown): ActionResult<never> {
 }
 
 /** Bulk-applies the 5 category prices across every matching SlotRule row
- * in one transaction, then writes a single audit entry summarizing the
- * new values (entityId 'bulk', since no single row id applies). Noon
- * applies to every day of the week at once (it's flat) — the other four
- * split by weekday/weekend × afternoon/night. */
-export async function updatePricingAction(input: PricingFormInput): Promise<ActionResult<{ ok: true }>> {
+ * for ONE FIELD, in one transaction, then writes a single audit entry
+ * summarizing the new values (entityId 'bulk', since no single row id
+ * applies). Noon applies to every day of the week at once (it's flat) —
+ * the other four split by weekday/weekend × afternoon/night.
+ *
+ * `fieldId` is a separate argument, not part of the Zod-validated form
+ * input — it's which record the owner is editing (chosen via
+ * app/admin/pricing/page.tsx's field selector when a venue has more than
+ * one), not data they typed into the form.
+ */
+export async function updatePricingAction(
+  fieldId: string,
+  input: PricingFormInput,
+): Promise<ActionResult<{ ok: true }>> {
   try {
     const staff = await requireRole('OWNER');
     const parsed = pricingSchema.parse(input);
-
-    // EVERY where clause below is venue-scoped. Without it these five
-    // updateMany calls rewrote the price grid of every venue on the
-    // platform — one owner editing their own prices silently repriced
-    // every other owner's turf. The single highest-blast-radius bug the
-    // multi-tenant audit found.
     const { venueId } = staff;
+
+    // The field genuinely belongs to the caller's venue - without this, a
+    // hand-edited fieldId could bulk-reprice ANY venue's field, not just
+    // the caller's own. Same shape as the venueId scoping this action
+    // already had (the highest-blast-radius bug the original tenant-
+    // isolation audit found) — one field's worth of the same class of bug.
+    const field = await prisma.field.findFirst({ where: { id: fieldId, venueId }, select: { id: true } });
+    if (!field) throw new ForbiddenError('That field is not available.');
 
     await prisma.$transaction(async (tx) => {
       await tx.slotRule.updateMany({
-        where: { venueId, slotIndex: { in: [...NOON_SLOT_INDEXES] } },
+        where: { fieldId, slotIndex: { in: [...NOON_SLOT_INDEXES] } },
         data: { price: parsed.noon },
       });
       await tx.slotRule.updateMany({
-        where: { venueId, dayOfWeek: { in: [...WEEKDAY_DAYS_OF_WEEK] }, slotIndex: { in: AFTERNOON_SLOTS } },
+        where: { fieldId, dayOfWeek: { in: [...WEEKDAY_DAYS_OF_WEEK] }, slotIndex: { in: AFTERNOON_SLOTS } },
         data: { price: parsed.afternoon },
       });
       await tx.slotRule.updateMany({
-        where: { venueId, dayOfWeek: { in: [...WEEKEND_DAYS_OF_WEEK] }, slotIndex: { in: AFTERNOON_SLOTS } },
+        where: { fieldId, dayOfWeek: { in: [...WEEKEND_DAYS_OF_WEEK] }, slotIndex: { in: AFTERNOON_SLOTS } },
         data: { price: parsed.weekendAfternoon },
       });
       await tx.slotRule.updateMany({
-        where: { venueId, dayOfWeek: { in: [...WEEKDAY_DAYS_OF_WEEK] }, slotIndex: { in: [...PEAK_SLOT_INDEXES] } },
+        where: { fieldId, dayOfWeek: { in: [...WEEKDAY_DAYS_OF_WEEK] }, slotIndex: { in: [...PEAK_SLOT_INDEXES] } },
         data: { price: parsed.night },
       });
       await tx.slotRule.updateMany({
-        where: { venueId, dayOfWeek: { in: [...WEEKEND_DAYS_OF_WEEK] }, slotIndex: { in: [...PEAK_SLOT_INDEXES] } },
+        where: { fieldId, dayOfWeek: { in: [...WEEKEND_DAYS_OF_WEEK] }, slotIndex: { in: [...PEAK_SLOT_INDEXES] } },
         data: { price: parsed.weekendNight },
       });
       await tx.auditLog.create({
@@ -86,7 +97,7 @@ export async function updatePricingAction(input: PricingFormInput): Promise<Acti
           entityId: 'bulk',
           venueId,
           tenantId: staff.tenantId,
-          after: parsed as unknown as Prisma.InputJsonValue,
+          after: { fieldId, ...parsed } as unknown as Prisma.InputJsonValue,
         },
       });
     });

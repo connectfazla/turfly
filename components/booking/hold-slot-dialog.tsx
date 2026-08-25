@@ -22,6 +22,9 @@ import type { PublicSlotView } from './types';
 
 export interface HoldSlotDialogProps {
   date: string; // yyyy-MM-dd
+  /** Which field this slot belongs to (multi-field pass) — carried
+   * straight through into the HELD row, same as date/slotIndex below. */
+  fieldId: string;
   slot: PublicSlotView | null;
   onOpenChange: (open: boolean) => void;
 }
@@ -32,14 +35,14 @@ export interface HoldSlotDialogProps {
  * so a hold can't exist without them (CLAUDE.md §5). Everything else
  * (email, team, note) is collected on /book/confirm.
  */
-export function HoldSlotDialog({ date, slot, onOpenChange }: HoldSlotDialogProps) {
+export function HoldSlotDialog({ date, fieldId, slot, onOpenChange }: HoldSlotDialogProps) {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
 
   const form = useForm<HoldSlotFormInput>({
     resolver: zodResolver(holdSlotSchema),
-    defaultValues: { date, slotIndex: slot?.index ?? 0, phone: '', fullName: '' },
-    values: slot ? { date, slotIndex: slot.index, phone: '', fullName: '' } : undefined,
+    defaultValues: { date, fieldId, slotIndex: slot?.index ?? 0, phone: '', fullName: '' },
+    values: slot ? { date, fieldId, slotIndex: slot.index, phone: '', fullName: '' } : undefined,
   });
 
   async function onSubmit(values: HoldSlotFormInput) {

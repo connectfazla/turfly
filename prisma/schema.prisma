@@ -226,6 +226,7 @@ model Venue {
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 
+  fields    Field[]
   slotRules SlotRule[]
   blackouts Blackout[]
   bookings  Booking[]
@@ -233,6 +234,46 @@ model Venue {
   staff     VenueStaff[]
 
   @@index([tenantId])
+}
+
+/// A physical field/court within a Venue — the unit multi-sport support is
+/// built on ("two football pitches and a badminton court" = one Venue,
+/// three Fields). Each Field gets its own SlotRule price/bookability grid
+/// and its own Bookings/Blackouts; the day's slot GRID ITSELF (90-minute
+/// slots, 16/day, lib/slots.ts) stays system-wide — a Field chooses WHAT to
+/// charge and WHICH slots to open, not how long a slot lasts. Owner-defined
+/// slot duration per field is an explicit non-goal of this pass (see the
+/// bottom-of-file note).
+///
+/// Every existing Venue is backfilled to exactly one Field (see the
+/// bottom-of-file note) — a single-field venue keeps working with zero
+/// migration pain, same reasoning as the original Venue Zero backfill.
+model Field {
+  id      String @id @default(cuid())
+  venueId String
+  venue   Venue  @relation(fields: [venueId], references: [id])
+
+  name String
+
+  /// Free text, owner-defined ("Football", "Badminton", "Cricket nets") —
+  /// deliberately NOT a constrained enum, so an owner is never blocked by a
+  /// sport this app's authors didn't anticipate.
+  sportName String
+
+  isActive Boolean @default(true)
+
+  /// Display order on the field-picker (components/booking/field-picker.tsx)
+  /// and the admin field switcher — lowest first, ties broken by createdAt.
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  slotRules SlotRule[]
+  blackouts Blackout[]
+  bookings  Booking[]
+
+  @@index([venueId])
 }
 
 /// A grant: this staff member has this role at THIS one venue. Owners are
@@ -322,6 +363,15 @@ model Booking {
   /// reports query Booking without joining through Venue.
   tenantId String?
 
+  /// NOT NULL as of the multi-field pass (see the bottom-of-file note) —
+  /// every venue was backfilled to exactly one Field first, so this is
+  /// never actually optional in practice; kept alongside venueId (not
+  /// instead of it) the same way Payment.venueId is denormalized from
+  /// Booking.venueId, so a venue-wide query never needs to join through
+  /// Field just to filter by venue.
+  fieldId String
+  field   Field  @relation(fields: [fieldId], references: [id])
+
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id])
 
@@ -361,15 +411,19 @@ model Booking {
 
   // NOTE: this @@unique is a PLACEHOLDER so Prisma knows the shape.
   // It must be REPLACED by the partial index in the migration — see bottom of file.
-  // Venue-scoped as of Migration B: two venues can hold the same
-  // (date, slotIndex) independently, while within one venue exactly one
-  // live booking may exist.
-  @@unique([venueId, date, slotIndex], name: "one_live_booking_per_slot")
+  // Field-scoped as of the multi-field pass: two fields at the same venue
+  // (or two different venues) can hold the same (date, slotIndex)
+  // independently, while within one field exactly one live booking may
+  // exist. venueId stays in the key too (not load-bearing for correctness —
+  // fieldId already implies venueId — but it costs nothing and keeps the
+  // index directly useful for venue-wide queries).
+  @@unique([venueId, fieldId, date, slotIndex], name: "one_live_booking_per_slot")
   @@index([date, status])
   @@index([customerId])
   @@index([status, holdExpiresAt])
   @@index([reference])
   @@index([venueId])
+  @@index([fieldId])
 }
 
 // ---------------------------------------------------------------- config
@@ -382,20 +436,25 @@ model SlotRule {
   /// NOT NULL as of Migration B — see Booking.venueId.
   venueId    String
   venue      Venue   @relation(fields: [venueId], references: [id])
+  /// NOT NULL as of the multi-field pass — see Booking.fieldId. Every field
+  /// gets its own full 112-row grid, same reasoning venueId's own rollout
+  /// used one migration pass earlier.
+  fieldId    String
+  field      Field   @relation(fields: [fieldId], references: [id])
   dayOfWeek  Int // 0 = Sunday … 6 = Saturday
   slotIndex  Int // 0..15
   isBookable Boolean @default(true)
   price      Decimal @db.Decimal(10, 2)
 
-  // Venue-scoped as of the tenant-isolation pass: every venue needs its own
-  // full 112-row price grid, so the old global (dayOfWeek, slotIndex) key
-  // made a second venue literally impossible to seed. Booking's partial
-  // index is NOT widened here — it stays coupled to the engine's
-  // venue-threading pass, since widening it before the queries are
-  // venue-aware buys nothing.
-  @@unique([venueId, dayOfWeek, slotIndex])
+  // Field-scoped as of the multi-field pass: every field needs its own full
+  // 112-row price grid, so the old venue-wide (venueId, dayOfWeek,
+  // slotIndex) key made a second field at the same venue literally
+  // impossible to seed — exactly the same problem the venue-wide key
+  // solved one pass earlier for a second VENUE.
+  @@unique([fieldId, dayOfWeek, slotIndex])
   @@index([dayOfWeek])
   @@index([venueId])
+  @@index([fieldId])
 }
 
 /// A null slotIndex closes the entire day.
@@ -404,6 +463,9 @@ model Blackout {
   /// NOT NULL as of Migration B — see Booking.venueId.
   venueId     String
   venue       Venue    @relation(fields: [venueId], references: [id])
+  /// NOT NULL as of the multi-field pass — see Booking.fieldId.
+  fieldId     String
+  field       Field    @relation(fields: [fieldId], references: [id])
   date        DateTime @db.Date
   slotIndex   Int?
   reason      String
@@ -411,16 +473,19 @@ model Blackout {
   createdBy   User     @relation(fields: [createdById], references: [id])
   createdAt   DateTime @default(now())
 
-  // Venue-scoped as of the tenant-isolation pass: two venues must be able
-  // to blackout the same (date, slotIndex) independently.
+  // Field-scoped as of the multi-field pass: two fields at the same venue
+  // must be able to blackout the same (date, slotIndex) independently —
+  // closing the badminton court for maintenance must not also close the
+  // football pitch.
   // NOTE (pre-existing, unchanged): slotIndex is nullable and Postgres
   // treats NULLs as distinct, so "whole day" blackouts have never actually
   // been deduped by this constraint. Fixing that needs UNIQUE NULLS NOT
   // DISTINCT (available on Neon/PG15+) and is a real behavior change, so
   // it is a deliberate decision, not something to slip into this pass.
-  @@unique([venueId, date, slotIndex])
+  @@unique([fieldId, date, slotIndex])
   @@index([date])
   @@index([venueId])
+  @@index([fieldId])
 }
 
 // VenueSetting (the pre-multi-tenant global settings singleton) is RETIRED
@@ -724,4 +789,37 @@ model RateLimitBucket {
 // order, for the same "don't destroy data you haven't copied yet" reason
 // as every other multi-step migration in this file — not the enum-in-
 // transaction reason.
+//
+// UPDATE (multi-field / multi-sport pass): Field was added, and
+// Booking/SlotRule/Blackout each gained a fieldId — one physical
+// field/court per row instead of one shared grid per venue. Same
+// nullable-then-NOT-NULL, two-migration shape as every prior widening of
+// this index, run back-to-back with scripts/backfill-fields.ts in between:
+//   1. CREATE TABLE "Field"; ADD COLUMN "fieldId" (nullable) to Booking/
+//      SlotRule/Blackout.
+//   2. scripts/backfill-fields.ts creates exactly one Field per existing
+//      Venue (name = the venue's own name, sportName = "Football" — this
+//      app's origin sport, a reasonable default nobody is forced to keep)
+//      and points every existing SlotRule/Blackout/Booking row at it. A
+//      single-field venue costs nothing extra and needs no picker UI
+//      (app/book/page.tsx skips straight to the date grid when a venue has
+//      exactly one active field — same "auto-resolve unless ambiguous"
+//      shape as getRequestVenue()/accessibleVenueIds() elsewhere).
+//   3. DROP INDEX one_live_booking_per_slot; DROP SlotRule/Blackout's old
+//      venue-scoped unique constraints; ALTER fieldId SET NOT NULL on all
+//      three tables; CREATE UNIQUE INDEX one_live_booking_per_slot
+//      ON "Booking" ("venueId", "fieldId", date, "slotIndex")
+//      WHERE status IN ('HELD','CONFIRMED','COMPLETED','PENDING_VERIFICATION');
+//      and the equivalent (fieldId, dayOfWeek, slotIndex) / (fieldId, date,
+//      slotIndex) unique constraints on SlotRule/Blackout.
+// venueId is NOT removed from any of the three tables — see Booking.fieldId's
+// doc comment for why it stays denormalized alongside fieldId rather than
+// being replaced by it.
+//
+// Explicit non-goal of this pass: owner-defined slot DURATION per field
+// (e.g. 60-minute badminton slots next to 90-minute football ones). Every
+// field shares the one system-wide grid in lib/slots.ts — a Field chooses
+// its price and which of the 16 slots are open, not how long a slot is. Do
+// not casually parameterize SLOT_MINUTES/SLOTS_PER_DAY to "finish the job";
+// that is a real follow-on project of its own; see CLAUDE.md §11.
 // ================================================================

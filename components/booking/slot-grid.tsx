@@ -10,6 +10,9 @@ const POLL_INTERVAL_MS = 30_000;
 
 export interface SlotGridProps {
   date: string; // yyyy-MM-dd
+  /** Which field this grid is showing (multi-field pass) — threaded into
+   * the polling URL and the hold dialog. */
+  fieldId: string;
   initialSlots: PublicSlotView[];
 }
 
@@ -19,15 +22,15 @@ export interface SlotGridProps {
  * waterfall); after mount it polls /api/availability every 30s so the grid
  * stays fresh if someone else books a slot.
  */
-export function SlotGrid({ date, initialSlots }: SlotGridProps) {
+export function SlotGrid({ date, fieldId, initialSlots }: SlotGridProps) {
   const [slots, setSlots] = useState(initialSlots);
   const [selected, setSelected] = useState<PublicSlotView | null>(null);
   const router = useRouter();
   // Re-sync local state whenever the server gives us fresh initialSlots
-  // (e.g. navigating to a different date).
-  const lastDate = useRef(date);
-  if (lastDate.current !== date) {
-    lastDate.current = date;
+  // (e.g. navigating to a different date, or switching fields).
+  const lastKey = useRef(`${date}:${fieldId}`);
+  if (lastKey.current !== `${date}:${fieldId}`) {
+    lastKey.current = `${date}:${fieldId}`;
     setSlots(initialSlots);
   }
 
@@ -35,7 +38,7 @@ export function SlotGrid({ date, initialSlots }: SlotGridProps) {
     let cancelled = false;
     const id = setInterval(async () => {
       try {
-        const res = await fetch(`/api/availability?date=${date}`, { cache: 'no-store' });
+        const res = await fetch(`/api/availability?date=${date}&field=${fieldId}`, { cache: 'no-store' });
         if (!res.ok || cancelled) return;
         const body = (await res.json()) as { slots: PublicSlotView[] };
         if (!cancelled) setSlots(body.slots);
@@ -48,7 +51,7 @@ export function SlotGrid({ date, initialSlots }: SlotGridProps) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [date]);
+  }, [date, fieldId]);
 
   return (
     <>
@@ -66,6 +69,7 @@ export function SlotGrid({ date, initialSlots }: SlotGridProps) {
 
       <HoldSlotDialog
         date={date}
+        fieldId={fieldId}
         slot={selected}
         onOpenChange={(open) => {
           if (!open) setSelected(null);

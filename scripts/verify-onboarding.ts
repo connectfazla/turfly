@@ -61,6 +61,10 @@ async function cleanupTenantOf(userId: string) {
   for (const v of t.venues) {
     await prisma.slotRule.deleteMany({ where: { venueId: v.id } });
     await prisma.auditLog.deleteMany({ where: { venueId: v.id } });
+    // Multi-field pass: provisionTenant() creates a Field per venue now,
+    // and Field.venueId is RESTRICT — the venue can't be deleted while it
+    // still exists.
+    await prisma.field.deleteMany({ where: { venueId: v.id } });
     await prisma.venue.delete({ where: { id: v.id } });
   }
   await prisma.auditLog.deleteMany({ where: { tenantId: t.id } });

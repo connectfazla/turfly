@@ -37,10 +37,11 @@ export const SLOT_RULES_PER_VENUE = ALL_DAYS_OF_WEEK.length * ALL_SLOT_INDEXES.l
  * slotIndex 4 is seeded isBookable=false on EVERY day — this is how the
  * maintenance window stays data rather than a hard-coded condition.
  */
-export async function seedSlotRulesForVenue(db: Db, venueId: string): Promise<number> {
+export async function seedSlotRulesForVenue(db: Db, venueId: string, fieldId: string): Promise<number> {
   const rows = ALL_DAYS_OF_WEEK.flatMap((dayOfWeek) =>
     ALL_SLOT_INDEXES.map((slotIndex) => ({
       venueId,
+      fieldId,
       dayOfWeek,
       slotIndex,
       isBookable: slotIndex !== MAINTENANCE_SLOT,
@@ -48,8 +49,33 @@ export async function seedSlotRulesForVenue(db: Db, venueId: string): Promise<nu
     })),
   );
 
+  // skipDuplicates relies on the (fieldId, dayOfWeek, slotIndex) unique
+  // constraint (multi-field pass) — re-running for a field that already has
+  // its grid skips cleanly; a genuinely new field always inserts all 112,
+  // since nothing else shares its fieldId yet.
   const result = await db.slotRule.createMany({ data: rows, skipDuplicates: true });
   return result.count;
+}
+
+/**
+ * IDEMPOTENT: a venue's first Field, created if it doesn't have one yet.
+ * Named after the venue itself, sportName "Football" — this app's origin
+ * sport, a default every owner can rename, never a lock-in. A venue must
+ * have at least one Field before its price grid can be seeded, the same
+ * ordering constraint Venue itself has relative to SlotRule.
+ */
+export async function ensureDefaultField(db: Db, venueId: string, venueName: string): Promise<string> {
+  const existing = await db.field.findFirst({
+    where: { venueId },
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const field = await db.field.create({
+    data: { venueId, name: venueName, sportName: 'Football', isActive: true, sortOrder: 0 },
+  });
+  return field.id;
 }
 
 /** Matches lib/tenant.ts's DEFAULT_VENUE_SLUG. */
@@ -117,6 +143,10 @@ export interface ProvisionedTenant {
   venueId: string;
   venueSlug: string;
   venueCode: string;
+  /** The venue's first Field (multi-field pass) — every venue is
+   * provisioned with exactly one, renameable/joinable-by-more-fields from
+   * the dashboard afterward. */
+  fieldId: string;
   /** True when this call found an existing business rather than creating one. */
   alreadyExisted: boolean;
 }
@@ -147,14 +177,27 @@ export async function provisionTenant(
   // database's braces, not a substitute for it.
   const existing = await prisma.tenant.findUnique({
     where: { ownerUserId: input.ownerUserId },
-    select: { id: true, venues: { select: { id: true, slug: true, code: true }, take: 1 } },
+    select: {
+      id: true,
+      venues: {
+        select: { id: true, slug: true, code: true, name: true, fields: { select: { id: true }, take: 1 } },
+        take: 1,
+      },
+    },
   });
   if (existing?.venues[0]) {
+    const venue = existing.venues[0];
+    // Idempotency path from before Fields existed shouldn't be reachable in
+    // practice (this same transaction always creates one), but resolving it
+    // rather than asserting keeps this branch honest about what it actually
+    // knows.
+    const fieldId = venue.fields[0]?.id ?? (await ensureDefaultField(prisma, venue.id, venue.name));
     return {
       tenantId: existing.id,
-      venueId: existing.venues[0].id,
-      venueSlug: existing.venues[0].slug,
-      venueCode: existing.venues[0].code,
+      venueId: venue.id,
+      venueSlug: venue.slug,
+      venueCode: venue.code,
+      fieldId,
       alreadyExisted: true,
     };
   }
@@ -188,7 +231,10 @@ export async function provisionTenant(
             },
           });
 
-          await seedSlotRulesForVenue(tx, venue.id);
+          const field = await tx.field.create({
+            data: { venueId: venue.id, name: input.venueName, sportName: 'Football', isActive: true, sortOrder: 0 },
+          });
+          await seedSlotRulesForVenue(tx, venue.id, field.id);
 
           // The owner's User row already exists — they signed up and verified
           // before reaching onboarding. Fetched rather than created so the
@@ -234,6 +280,7 @@ export async function provisionTenant(
             venueId: venue.id,
             venueSlug: venue.slug,
             venueCode: venue.code,
+            fieldId: field.id,
             alreadyExisted: false,
           };
         },
