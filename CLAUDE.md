@@ -22,7 +22,8 @@ into the numbered sections written for the single-venue app.
 A single Next.js app with two surfaces over one database:
 
 - **Public booking page** — no login. Visitor picks a date, picks a 90-minute slot, submits contact details, gets a booking reference.
-- **Admin panel** — `/admin/*`, login required. Two roles: `ADMIN` (owner) and `MODERATOR` (counter staff). Being superseded by a venue-scoped dashboard + Clerk-based Owner/Manager/Bookie roles — see §11.
+- **Admin panel** — `/admin/*`, Clerk sign-in required. Roles are venue-scoped `OWNER | MANAGER | BOOKIE` — see §11.
+- **Platform panel** — `/super-admin/*`, for the platform operator only. Issues the registration codes without which nobody can register a business.
 
 One football field, one venue, open 24 hours, as of the original university project. §11 covers what multi-venue changes.
 
@@ -52,9 +53,14 @@ BOOKABLE/DAY   = 15
 
 ```sql
 CREATE UNIQUE INDEX one_live_booking_per_slot
-ON "Booking" (date, "slotIndex")
+ON "Booking" ("venueId", date, "slotIndex")
 WHERE status IN ('HELD','CONFIRMED','COMPLETED','PENDING_VERIFICATION');
 ```
+
+Venue-scoped since Migration B. Both halves are load-bearing and pull in opposite
+directions: drop `venueId` and one turf's booking blocks an unrelated business's;
+drop the `WHERE` and a cancelled slot can never be rebooked. `e2e/concurrency.spec.ts`
+asserts both.
 
 ---
 
@@ -65,7 +71,7 @@ WHERE status IN ('HELD','CONFIRMED','COMPLETED','PENDING_VERIFICATION');
 | Framework | Next.js 15, App Router, TypeScript strict |
 | UI | React 19, Tailwind CSS v4, shadcn/ui (Radix) |
 | DB | PostgreSQL 16 + Prisma 6 |
-| Auth | Auth.js v5 (staff/admin, legacy — being replaced by Clerk Organizations, §11) + Clerk (tenant/customer layer, and eventually Owner/Manager/Bookie) |
+| Auth | Clerk (`@clerk/nextjs`) for everyone — staff, owners, operator, optional customer accounts. Auth.js is GONE. |
 | Validation | Zod — one schema shared by client form and server action |
 | Forms | React Hook Form |
 | Dates | date-fns + date-fns-tz |
@@ -156,27 +162,35 @@ Slot grid: 4 columns desktop, 2 tablet, 1 phone. Render all 16 positions always 
 ## 7. Routes
 
 ```
-Public   /  /book  /book/[date]  /book/confirm  /book/success/[ref]
-         /booking/lookup  /rules
-Staff    /login  /admin  /admin/calendar  /admin/bookings
-         /admin/bookings/[id]  /admin/bookings/new
-         /admin/blackouts  /admin/customers
-Admin    /admin/pricing  /admin/reports  /admin/users  /admin/audit
+Public    /  /book  /book/[date]  /book/confirm  /book/success/[ref]
+          /booking/lookup  /rules  /sign-in  /sign-up
+Staff     /admin  /admin/calendar  /admin/bookings
+          /admin/bookings/[id]  /admin/bookings/new
+          /admin/blackouts  /admin/customers
+Owner     /admin/pricing  /admin/reports  /admin/audit
+Operator  /super-admin  /super-admin/codes  /super-admin/tenants
 ```
 
-Middleware guards `/admin/*`. The four Admin-only routes additionally require `role === 'ADMIN'`.
-**Re-check the role inside every action** — middleware alone is not authorisation.
+`/login` is a redirect stub to `/sign-in`, kept for old bookmarks. `/admin/users` is
+gone — it was password-based; venue-scoped Clerk invitations replace it.
+
+Middleware ONLY checks that somebody is signed in. It does no role check and reads no
+database — a role now comes from `Tenant`/`VenueStaff`/`PlatformAdmin` rows, which is
+a query that does not belong in middleware. **The real gate is `requireRole()` inside
+every page and action** (`requireSuperAdmin()` for `/super-admin/*`). A layout does not
+protect a Server Action.
 
 ---
 
 ## 8. Conventions
 
 - `pnpm` for packages. `pnpm dlx shadcn@latest add <c>` for components, then restyle to the tokens above.
-- Booking reference format: `TRF-YYYY-NNNN`, sequential per year, generated inside the transaction.
+- Booking reference format: `TRF-{venueCode}-YYYY-NNNN`, sequential per venue per year, from `VenueReferenceCounter`, assigned inside the transaction but AFTER the booking insert (see §10). Legacy `TRF-YYYY-NNNN` references still resolve and must keep doing so.
 - Server Actions live in `app/actions/`, one file per domain area.
 - No `dangerouslySetInnerHTML`. Anywhere.
 - No secrets in code. Env vars only:
-  `DATABASE_URL AUTH_SECRET AUTH_URL RESEND_API_KEY SMS_API_KEY NOTIFICATIONS_ENABLED HOLD_MINUTES=10 CANCELLATION_WINDOW_HOURS=6 BOOKING_WINDOW_DAYS=14 TZ=Asia/Dhaka`
+  `DATABASE_URL NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY CLERK_SECRET_KEY RESEND_API_KEY SMS_API_KEY NOTIFICATIONS_ENABLED TZ=Asia/Dhaka`
+  `HOLD_MINUTES` / `CANCELLATION_WINDOW_HOURS` / `BOOKING_WINDOW_DAYS` are now per-venue columns on `Venue`; the env vars survive only as fallbacks for provisioning defaults.
 - Commits: conventional (`feat:`, `fix:`, `test:`, `chore:`).
 
 ## 9. Definition of done for any task
@@ -199,74 +213,74 @@ Middleware guards `/admin/*`. The four Admin-only routes additionally require `r
 - Order of checks in availability matters: maintenance → blackout → booked → past → rule. Getting this wrong makes the 06:00 slot read as merely "blocked", and makes completed late-night bookings read as "past".
 - Serialisable transactions can abort under contention. Retry once before surfacing an error.
 - **`DATABASE_URL` must be Neon's DIRECT (non-`-pooler`) connection string, not the pooled one.** Neon's `-pooler` endpoint runs PgBouncer in transaction-pooling mode, which does not reliably support Prisma's interactive `$transaction()` API — every write in `lib/booking-engine.ts` uses it (`runSerializable`). Using the pooled URL fails with `P2028: Transaction not found`, non-deterministically, at whichever query happens to be in flight when the pool reassigns the connection. Confirmed by reproducing outside Next.js entirely. Separately, `runSerializable`'s transaction `timeout`/`maxWait` were widened (15s/5s, was Prisma's 5s/2s default) because this Neon compute's per-query round-trip latency, multiplied across `holdSlot`'s ~8 sequential queries, was already close to the default budget even on the direct connection.
+- **Reference allocation must happen AFTER the booking insert, not before.** `VenueReferenceCounter` is one row per venue per year, so every concurrent booking for a venue contends on it. Reserving the number first funnels all N racing transactions through that single row lock and they time out (`P2028`) instead of failing cleanly on the slot index; the booking is inserted with a throwaway UUID reference and renamed immediately after, so only the transaction that already won the slot ever touches the counter. Measured at 20-way contention: 1 success / 16 SlotTaken / 3 raw P2028 with the counter first, 1 / 19 / 0 with it last.
 - **`tsc --noEmit` passing does NOT mean `next build` will pass.** `next build`'s "Linting and checking validity of types" step also runs ESLint (e.g. `react/no-unescaped-entities` — a bare `'` inside JSX text, not `&apos;`), which `tsc` alone never catches. Before pushing anything that touches JSX text content, run the real `pnpm run build` (matching what Vercel runs) at least once, not just `tsc --noEmit` — a build that only fails on Vercel and not locally wastes a deploy cycle finding out.
 
 ---
 
 ## 11. Multi-tenant SaaS conversion
 
-**Status:** Phase 0 complete (schema + tenancy plumbing, zero user-facing behavior
-change — see the phase list below). Phases 1-6 not started. Full architecture,
-reasoning, and file-by-file phase breakdown: `~/.claude/plans/sprightly-wobbling-kahn.md`
-— read that file before starting Phase 1 or later; this section is a summary, not a
-replacement for it.
+**Status:** Stages 1-4 and 6 shipped. Full plan, reasoning, and remaining stages:
+`~/.claude/plans/sprightly-wobbling-kahn.md` — read it before starting a new stage.
 
-**Why:** the university single-venue app is being turned into Turfly, a product sold to
-multiple turf owners, each potentially running several physical venues, each with their
-own staff. §1-10 above describe the domain rules of the original app, which mostly
-still hold — this section only covers what's NEW or CHANGED.
+**THE CENTRAL RULE: our database is the authorization source of truth; Clerk is
+authentication only.** `requireRole()` never reads Clerk's `orgId`/`orgRole` — it reads
+`Tenant.ownerClerkUserId`, `VenueStaff`, and `PlatformAdmin`. This is deliberate: a
+lagging webhook, a failed organization creation, or an unset active org can never lock
+an owner out of their own dashboard. Clerk Organizations matter only for hosted staff
+invitations (Stage 8), which is why everything below works with Organizations not even
+enabled on the instance.
 
-**New role model** (replaces/extends `Role: ADMIN | MODERATOR`, which still exists for
-the one legacy venue through Phase 2):
-- **Super Admin** — the platform operator (one person today). Checked via a
-  `PlatformAdmin` DB table (Clerk user id), not the Role enum.
-- **Owner** — a Turf Owner. Not a `VenueStaff` row — derived from Clerk Organization
-  membership (`org:admin` role on the venue's `Tenant`). Full access to every `Venue`
-  under their `Tenant`.
-- **Manager** — `VenueStaff.role = MANAGER`. Venue-scoped. Confirms bookings, verifies
-  payment claims, walk-in bookings, sees that venue's revenue/reports. Cannot manage
-  staff or pricing.
-- **Bookie** — `VenueStaff.role = BOOKIE`. Venue-scoped. Booking + check-in only — no
-  financial visibility.
-- **Customer** — unauthenticated by default (phone-only, as in the original app) or an
-  optional Clerk personal account (`Customer.clerkUserId`) for a cross-venue "my
-  bookings" view. Never a `VenueStaff` row, never a `Tenant` owner.
+**Roles.** `OWNER | MANAGER | BOOKIE`, scoped to one venue.
+- **OWNER** is *derived, never stored* — from `Tenant.ownerClerkUserId`, or a
+  `PlatformAdmin` row. That is why `VenueStaffRole` has only MANAGER and BOOKIE.
+- **MANAGER** — money and reports, no pricing or staff management.
+- **BOOKIE** — bookings and check-in only. Genuinely excluded from money:
+  `recordPayment` / `verifyPayment` / `rejectPayment` and the reports export all
+  require OWNER or MANAGER.
+- **Super Admin** — `PlatformAdmin` table, checked by `requireSuperAdmin()`. A table
+  rather than an env var so it is grantable without a redeploy.
 
-**Tenancy model:** one Clerk Organization = one `Tenant` = one Turf Owner's business.
-One `Tenant` can have several `Venue` rows (multi-venue support). `VenueStaff` exists
-specifically because Clerk Organization roles are org-wide, not scoped to one venue
-within a multi-venue tenant — see the plan file's "Auth & Tenancy Architecture" section
-for the full reasoning, including the multi-org caveat (a person could be staff at
-venues under two different tenants/orgs and must switch Clerk's active org).
+**Staff identity.** `User` = one row per human, the FK anchor for
+`Booking.createdById` / `AuditLog.actorId` / etc., bound to a Clerk account via
+`clerkUserId`. `VenueStaff` = a grant, pointing at `User.id`. Keeping the local row is
+what lets an old audit entry still render "who did this" after a Clerk account is
+deleted.
 
-**"Tenant Zero" / "Venue Zero":** the one venue that existed before any real Turf Owner
-signed up through the new onboarding flow. `Tenant.clerkOrgId` is nullable specifically
-because Tenant Zero has no Clerk Organization. Resolved via `lib/tenant.ts`'s
-`getDefaultVenueId()` (slug `"default"`) — every Phase 0 call site that needs a venue
-but doesn't yet have a real per-request one falls back to this, which is why Phase 0 is
-a genuine zero-behavior-change pass despite touching most of the codebase.
+**Binding is security-critical** (`resolveStaffUser()` in `lib/auth/require-role.ts`).
+A Clerk account binds to a `User` row ONLY when Clerk reports the email **verified**,
+it matches `User.invitedEmail` (NOT `User.email`, which is editable for display), and
+the row is unbound — claimed via `updateMany` so two concurrent first sign-ins cannot
+both take it. Do not relax any of the three.
 
-**Schema changes already live** (Phase 0): `Tenant`, `Venue`, `VenueStaffRole` enum,
-`VenueStaff`, `PlatformAdmin` are new. `Booking`/`SlotRule`/`Blackout`/`Payment` gained
-a **nullable** `venueId` (`Booking`/`AuditLog` also gained a nullable `tenantId`) —
-nullable deliberately: the partial unique index on `Booking` is still keyed on
-`(date, slotIndex)` only, NOT `(venueId, date, slotIndex)`, and stays that way until a
-later phase makes `venueId` `NOT NULL` and widens the index in the same migration.
-`VenueSetting` is gone; its fields moved onto `Venue`. `Venue.depositPercent` (default
-30) replaces the old fixed `VenueSetting.advanceAmount` — `Booking`/`Payment` amounts
-owed are computed as a percentage of price, not a flat BDT figure, everywhere this
-matters (`lib/booking-engine.ts`'s `confirmHeldBooking`, `components/booking/confirm-form.tsx`,
-`components/admin/payment-settings-form.tsx`).
+**Active venue** (`lib/auth/active-venue.ts`): explicit param > cookie > sole venue.
+None of them are trusted — every one is re-derived against real grants before use.
+Prefer `requireRoleForVenue(venueId, ...)` wherever the venue is known; the cookie is
+shared across browser tabs, so a mutation from an older tab can otherwise land on
+whichever venue was opened last.
 
-**Booking reference format is unchanged for now** (`TRF-YYYY-NNNN`) — the plan
-specifies it becomes `TRF-{venueCode}-YYYY-NNNN` with a per-venue-scoped counter in a
-later phase, once `lib/booking-engine.ts`'s `nextReference()` is made venue-aware. Not
-done yet; the counter is still a single global sequence.
+**Registration codes** (`lib/registration-code.ts`). Nobody can create a `Tenant`
+without redeeming one — this is what makes the platform invite-only. Two-phase:
+`redeemedAt` = claimed, `tenantId` = completed. The gap lets a half-finished signup
+resume instead of burning the code. The one-time guarantee comes from `updateMany`'s
+WHERE clause under READ COMMITTED, NOT a transaction — a concurrent identical UPDATE
+blocks on the row lock, re-evaluates its WHERE against the updated row, and matches
+zero rows. Verified by `scripts/verify-registration-codes.ts` (11 checks, including
+two genuinely concurrent redemptions).
 
-**Not started yet** (see the plan file for the full phase list): owner onboarding /
-venue provisioning, Clerk-based staff invites, `require-venue-role.ts`, venue-scoped
-`/dashboard/[venueId]/...` routes, `{venueSlug}.turfly.<tld>` subdomain-per-venue public booking URLs (updated from an earlier path-based `/v/[venueSlug]/...` design — see the plan file's Routing Structure section),
-`/super-admin/*`, per-venue email branding. Explicit non-goals (deferred, not
-forgotten): platform billing/Stripe, a real payment gateway, subdomain-per-venue custom
-domains, real-time push notifications, multi-region/timezone support beyond
-`Asia/Dhaka`.
+**Verification scripts** — run these after touching auth or tenancy:
+```
+pnpm exec tsx scripts/verify-tenant-isolation.ts
+pnpm exec tsx scripts/verify-registration-codes.ts
+pnpm exec tsx scripts/create-test-venue.ts            # second tenant, for isolation tests
+pnpm exec playwright test e2e/concurrency.spec.ts     # both halves of the index guarantee
+```
+
+**Not done yet:** subdomain routing (`{slug}.turfly.tld`), owner onboarding /
+provisioning (Stage 7), staff invitations + `/dashboard/[venueId]` (Stage 8), dropping
+the legacy `User.passwordHash` / `User.role` columns (Stage 9). Clerk **Organizations
+is not yet enabled** on the instance — needed only for Stage 8, and must be enabled
+with membership mode `optional`, since customers must be able to exist with no org.
+
+**Explicit non-goals:** platform billing/Stripe, a real payment gateway, real-time push
+notifications, multi-region beyond `Asia/Dhaka`.

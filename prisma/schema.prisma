@@ -488,6 +488,60 @@ model VenueReferenceCounter {
   @@id([venueId, year])
 }
 
+// ------------------------------------------------------- registration codes
+
+/// A one-time invitation to register a turf business. Nobody can create a
+/// Tenant without redeeming one — this is the gate that makes Turfly
+/// invite-only rather than open signup.
+///
+/// TWO-PHASE, and the distinction is what makes failure recoverable:
+///   claimed   = redeemedAt set. Somebody has taken this code; nobody else
+///               may. They may not have finished onboarding.
+///   completed = tenantId set. Onboarding finished and produced a business.
+///
+/// Splitting them means a crash midway through provisioning doesn't burn the
+/// code: the same person returns, and because redeemedByClerkUserId is theirs
+/// and tenantId is still null, they resume rather than being told their code
+/// is already used. A single `isUsed` boolean would strand them, and the only
+/// remedy would be the operator manually issuing a replacement.
+///
+/// Revocable only while tenantId is null. Once a real business exists behind
+/// a code, revoking it would be a lie — the business does not disappear, so
+/// the code row must keep pointing at it.
+model RegistrationCode {
+  /// Normalized for lookup: uppercase, dashes stripped. The primary key, so
+  /// two codes cannot normalize to the same value.
+  code String @id
+
+  /// As issued and shown to a human — "TURF-A7K2M-9QX4P". Kept separately so
+  /// the operator can read back exactly what they sent someone, while
+  /// redemption still accepts any casing or dash placement.
+  display String
+
+  /// The operator's own note about who this was for. Never shown to the
+  /// person redeeming it.
+  label         String?
+  issuedToEmail String?
+
+  createdByClerkUserId String
+  expiresAt            DateTime?
+  revokedAt            DateTime?
+
+  /// Phase 1 — see the two-phase note above.
+  redeemedAt            DateTime?
+  redeemedByClerkUserId String?
+
+  /// Phase 2. Unique: one code can only ever produce one business, so a
+  /// duplicate write is rejected by the database rather than by a check
+  /// somebody could forget to write.
+  tenantId String? @unique
+
+  createdAt DateTime @default(now())
+
+  @@index([createdByClerkUserId])
+  @@index([redeemedByClerkUserId])
+}
+
 // ---------------------------------------------------------------- audit
 
 /// Append-only. Written by the domain layer, never updated or deleted.
