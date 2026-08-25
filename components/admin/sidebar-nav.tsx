@@ -11,35 +11,44 @@ import {
   Tag,
   BarChart3,
   History,
+  UserCog,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { StaffRole } from '@/lib/auth/constants';
 
 interface NavLink {
   href: string;
   label: string;
   icon: LucideIcon;
+  /** Who may see this link. Cosmetic only — each route enforces its own
+   * access with requireRole(). If the two ever disagree, the route wins and
+   * the nav is the bug. */
+  roles: readonly StaffRole[];
 }
 
-/** Every staff account (ADMIN or MODERATOR) sees these. */
+const ALL: readonly StaffRole[] = ['OWNER', 'MANAGER', 'BOOKIE'];
+const MONEY: readonly StaffRole[] = ['OWNER', 'MANAGER'];
+const OWNER_ONLY: readonly StaffRole[] = ['OWNER'];
+
+/** Everyone who can work the counter. */
 const STAFF_LINKS: NavLink[] = [
-  { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/admin/calendar', label: 'Calendar', icon: CalendarDays },
-  { href: '/admin/bookings', label: 'Bookings', icon: ClipboardList },
-  { href: '/admin/blackouts', label: 'Blackouts', icon: Ban },
-  { href: '/admin/customers', label: 'Customers', icon: Users },
+  { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, roles: ALL },
+  { href: '/admin/calendar', label: 'Calendar', icon: CalendarDays, roles: ALL },
+  { href: '/admin/bookings', label: 'Bookings', icon: ClipboardList, roles: ALL },
+  { href: '/admin/blackouts', label: 'Blackouts', icon: Ban, roles: ALL },
+  { href: '/admin/customers', label: 'Customers', icon: Users, roles: MONEY },
 ];
 
-/** The Owner-only routes - the layout only renders these when the signed-in
- * staff member is an Owner, but that is cosmetic: each page's own
- * `await requireRole('OWNER')` is the real guard (CLAUDE.md §7).
- *
- * Staff management used to live here as /admin/users. It was password-based
- * and died with Auth.js; it returns as venue-scoped Clerk invitations. */
+/** Money and administration. A Bookie sees none of it — that restriction is
+ * the whole point of the role, so it must hold in the nav as well as in the
+ * routes, or the product promise ("staff who cannot see your revenue") is
+ * only half true. */
 const ADMIN_LINKS: NavLink[] = [
-  { href: '/admin/pricing', label: 'Pricing', icon: Tag },
-  { href: '/admin/reports', label: 'Reports', icon: BarChart3 },
-  { href: '/admin/audit', label: 'Audit', icon: History },
+  { href: '/admin/pricing', label: 'Pricing', icon: Tag, roles: OWNER_ONLY },
+  { href: '/admin/staff', label: 'Staff', icon: UserCog, roles: OWNER_ONLY },
+  { href: '/admin/reports', label: 'Reports', icon: BarChart3, roles: MONEY },
+  { href: '/admin/audit', label: 'Audit', icon: History, roles: MONEY },
 ];
 
 function isLinkActive(pathname: string, href: string): boolean {
@@ -82,26 +91,28 @@ function NavLinkItem({ link, active, vertical }: { link: NavLink; active: boolea
  * logic either way. Split out as a Client Component because active-link
  * highlighting needs the current pathname (usePathname()), which isn't
  * available in the Server Component layout around it. */
-export function SidebarNav({ isAdmin, vertical }: { isAdmin: boolean; vertical: boolean }) {
+export function SidebarNav({ role, vertical }: { role: StaffRole; vertical: boolean }) {
   const pathname = usePathname();
+  const staffLinks = STAFF_LINKS.filter((l) => l.roles.includes(role));
+  const adminLinks = ADMIN_LINKS.filter((l) => l.roles.includes(role));
 
-  // Grouped into "General" / "Admin" only for the vertical sidebar, where
-  // there's room for a group label - the horizontal mobile scroller stays
+  // Grouped into two sections only for the vertical sidebar, and only when
+  // there is a second group to show - the horizontal mobile scroller stays
   // one flat row, a group header would just eat space with nothing to say.
-  if (vertical && isAdmin) {
+  if (vertical && adminLinks.length > 0) {
     return (
       <nav className="flex flex-col gap-4">
         <div className="flex flex-col gap-0.5 pl-3">
-          {STAFF_LINKS.map((link) => (
+          {staffLinks.map((link) => (
             <NavLinkItem key={link.href} link={link} active={isLinkActive(pathname, link.href)} vertical />
           ))}
         </div>
         <div>
           <p className="px-2.5 pb-1 pl-[26px] text-caption font-medium tracking-wide text-text-muted/80 uppercase">
-            Admin
+            Manage
           </p>
           <div className="flex flex-col gap-0.5 pl-3">
-            {ADMIN_LINKS.map((link) => (
+            {adminLinks.map((link) => (
               <NavLinkItem key={link.href} link={link} active={isLinkActive(pathname, link.href)} vertical />
             ))}
           </div>
@@ -110,7 +121,7 @@ export function SidebarNav({ isAdmin, vertical }: { isAdmin: boolean; vertical: 
     );
   }
 
-  const links = isAdmin ? [...STAFF_LINKS, ...ADMIN_LINKS] : STAFF_LINKS;
+  const links = [...staffLinks, ...adminLinks];
   return (
     <nav className={cn('flex gap-1', vertical ? 'flex-col gap-0.5 pl-3' : 'flex-row overflow-x-auto')}>
       {links.map((link) => (

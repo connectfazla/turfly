@@ -35,9 +35,12 @@ function percentDelta(current: number, prior: number): { text: string; positive:
 }
 
 export default async function AdminReportsPage({ searchParams }: Props) {
-  // OWNER-only route. This is the real gate: middleware only proves
-  // somebody is signed in, and the sidebar hiding the link is cosmetic.
-  const staff = await requireRole('OWNER');
+  // Owner + Manager. A Manager takes and verifies payments, so refusing them
+  // the report of what came in made no sense — and /admin/reports/export
+  // already allowed them, so the page was the inconsistent half.
+  // This is the real gate: middleware only proves somebody is signed in, and
+  // the sidebar hiding the link is cosmetic.
+  const staff = await requireRole('OWNER', 'MANAGER');
   const params = await searchParams;
   const now = new Date();
   const from = (params.from ? parseDateParam(params.from) : null) ?? startOfMonth(now);

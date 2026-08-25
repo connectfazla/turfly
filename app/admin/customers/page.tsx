@@ -25,7 +25,10 @@ export default async function AdminCustomersPage({ searchParams }: Props) {
   const { q } = await searchParams;
   const query = q?.trim() ?? '';
 
-  const staff = await requireRole();
+  // Owner + Manager: the customer list carries booking history and block
+  // status, and blocking somebody is a commercial decision, not a
+  // counter-desk one.
+  const staff = await requireRole('OWNER', 'MANAGER');
   // Customer is global by design (phone-unique, so a customer's bookings can
   // span venues), which makes an unfiltered list every customer on the
   // platform. "Ours" = has booked here.

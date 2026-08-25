@@ -34,9 +34,10 @@ function diffSummary(before: unknown, after: unknown): string {
 }
 
 export default async function AdminAuditPage() {
-  // OWNER-only route. This is the real gate: middleware only proves
-  // somebody is signed in, and the sidebar hiding the link is cosmetic.
-  const staff = await requireRole('OWNER');
+  // Owner + Manager. A Bookie is excluded because the audit log reveals
+  // payment amounts and verification decisions — the exact financial detail
+  // that role exists not to see.
+  const staff = await requireRole('OWNER', 'MANAGER');
   // Audit rows carry other tenants' mutation history and staff names, so
   // this is scoped like everything else. Rows written before venueId
   // existed have null and are simply not shown here.

@@ -14,6 +14,7 @@
  */
 import type { User, VenueStaffRole } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import type { StaffRole } from './constants';
 import { getSessionUser } from './session';
 import { resolveActiveVenueId } from './active-venue';
 
@@ -31,14 +32,7 @@ export class ForbiddenError extends Error {
   }
 }
 
-/**
- * OWNER is derived, never stored: it comes from Tenant.ownerUserId (or
- * a PlatformAdmin row), which is why VenueStaffRole only has MANAGER and
- * BOOKIE. Keeping OWNER out of the enum also keeps every future migration
- * free of the "add an enum value and use it in the same transaction"
- * Postgres trap — see prisma/schema.prisma's bottom note.
- */
-export type StaffRole = 'OWNER' | 'MANAGER' | 'BOOKIE';
+export type { StaffRole } from './constants';
 
 export interface StaffUser {
   /** User.id — the FK anchor for Booking.createdById, AuditLog.actorId, etc. */

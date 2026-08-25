@@ -84,7 +84,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     // rendering a single child page.
     return <NoAccess />;
   }
-  const isOwner = staff.role === 'OWNER';
   const venueName = await getVenueName();
 
   return (
@@ -112,7 +111,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </Link>
         </div>
         <div className="flex-1 overflow-y-auto px-3 pb-3">
-          <SidebarNav isAdmin={isOwner} vertical />
+          <SidebarNav role={staff.role} vertical />
         </div>
         {/* The name/role block is not decoration: counter machines get
          * shared, and "who am I signed in as" is the thing staff need to
@@ -146,7 +145,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </div>
           </div>
           <div className="overflow-x-auto px-4 pb-3">
-            <SidebarNav isAdmin={isOwner} vertical={false} />
+            <SidebarNav role={staff.role} vertical={false} />
           </div>
         </header>
 
