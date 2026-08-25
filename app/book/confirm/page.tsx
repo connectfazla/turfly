@@ -18,7 +18,7 @@ import { ConfirmForm } from '@/components/booking/confirm-form';
 import { prisma } from '@/lib/prisma';
 import { formatBDT, formatDateLong } from '@/lib/format';
 import { slotLabel, type SlotIndex } from '@/lib/slots';
-import { getDefaultVenueId } from '@/lib/tenant';
+import { getRequestVenueId } from '@/lib/request-venue';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,7 +38,7 @@ export default async function ConfirmPage({ searchParams }: Props) {
   // to (falling back to the one default venue if the hold predates the
   // multi-tenant conversion, or has none for any other reason).
   const venue = await prisma.venue.findUnique({
-    where: { id: booking?.venueId ?? (await getDefaultVenueId()) },
+    where: { id: booking?.venueId ?? (await getRequestVenueId()) },
   });
   const now = new Date();
   const isValidHold = !!(

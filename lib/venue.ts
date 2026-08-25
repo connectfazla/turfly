@@ -1,6 +1,6 @@
 import { cache } from 'react';
 import { prisma } from './prisma';
-import { getDefaultVenueId } from './tenant';
+import { getRequestVenueId } from './request-venue';
 
 /** Fallback only for the (should-never-happen) case where a Venue row is
  * missing entirely - e.g. a database that hasn't been seeded/provisioned
@@ -26,7 +26,11 @@ export const DEFAULT_VENUE_NAME = 'Turfly';
  * of relying on the default.
  */
 export const getVenueSetting = cache(async (venueId?: string) => {
-  const id = venueId ?? (await getDefaultVenueId());
+  // Defaults to the venue the REQUEST is for (from the subdomain), which is
+  // right for the public booking pages. Pass an explicit venueId anywhere the
+  // venue comes from somewhere else — notably /admin, where it comes from the
+  // signed-in staff member's grant, not the host.
+  const id = venueId ?? (await getRequestVenueId());
   return prisma.venue.findUnique({ where: { id } });
 });
 

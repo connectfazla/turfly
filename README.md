@@ -559,3 +559,26 @@ The order this project's `BUILD_PLAN.md` recommends presenting it in (roughly tw
    nothing.
 
 The point to land: **correctness is enforced by the database, not by hope.**
+
+## Subdomain routing
+
+Every venue is served at `{slug}.turfly.app`. The booking pages keep ordinary
+paths — only the host distinguishes one venue from another
+(`lib/request-venue.ts`).
+
+**Locally**, use `*.lvh.me`, which resolves to `127.0.0.1` publicly — no
+`/etc/hosts` editing and no wildcard DNS:
+
+```
+http://test-venue.lvh.me:3000/book
+http://localhost:3000/book          # the bare domain still serves Venue Zero
+```
+
+**In production** this needs two things done by hand, outside the codebase:
+
+1. A wildcard DNS record — `*.turfly.app` — pointing at Vercel.
+2. `*.turfly.app` added as a domain in the Vercel project.
+
+Set `NEXT_PUBLIC_ROOT_DOMAIN` to the deployment's own domain. Until the
+wildcard exists, venues are still fully usable at the bare domain; they just
+do not have their own address yet.

@@ -32,7 +32,7 @@ import {
 } from '@/lib/schemas/booking';
 import { notifyBookingCancelled } from '@/lib/notify';
 import { clientIpFromHeaders, isRateLimited } from '@/lib/auth/rate-limit';
-import { getDefaultVenueId } from '@/lib/tenant';
+import { getRequestVenueId } from '@/lib/request-venue';
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string };
 
@@ -83,12 +83,10 @@ export interface HoldSlotResult {
  * many-IP/many-phone-number abuse (see README §15). */
 export async function holdSlotAction(input: HoldSlotFormInput): Promise<ActionResult<HoldSlotResult>> {
   try {
-    // TRANSITIONAL: /book/* is still the bare-domain, single-venue public
-    // route, so "the venue" is Venue Zero. Stage 5 moves these pages under
-    // /v/[venueSlug] and resolves the venue from the request host instead —
-    // at which point this becomes the venue from the route, and the only
-    // thing that changes is this one line.
-    const venueId = await getDefaultVenueId();
+    // Resolved from the request host: dhanmondi.turfly.app books Dhanmondi's
+    // pitch, the bare domain still books Venue Zero. This is the line that
+    // makes one set of booking pages serve every tenant.
+    const venueId = await getRequestVenueId();
 
     const ip = clientIpFromHeaders(await headers());
     // Rate-limit bucket is per venue as well as per IP. Sharing one bucket

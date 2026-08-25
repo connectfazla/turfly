@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE } from '@/lib/auth/constants';
 
+
 /**
  * Redirect convenience ONLY — this is not the authorisation boundary.
  *
@@ -19,6 +20,14 @@ const PROTECTED_PREFIXES = ['/admin', '/dashboard', '/super-admin', '/onboarding
 
 export default function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  // NOTE: subdomain -> venue resolution deliberately does NOT happen here.
+  // It needs a database lookup, which middleware cannot afford on every
+  // request, and rewriting to a /v/[slug] route tree would mean duplicating
+  // every booking page under it. The public pages call getRequestVenue()
+  // instead (lib/request-venue.ts), which reads the same host header from a
+  // Server Component where a query is fine and React's cache() dedupes it.
+
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   if (isProtected && !req.cookies.get(SESSION_COOKIE)) {

@@ -84,7 +84,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     // rendering a single child page.
     return <NoAccess />;
   }
-  const venueName = await getVenueName();
+  // staff.venueId, NOT the request host. The dashboard is reached at
+  // turfly.app/admin regardless of which venue you work at, so resolving the
+  // name from the host would show every staff member "Turfly" (Venue Zero)
+  // instead of their own turf.
+  const venueName = await getVenueName(staff.venueId);
 
   return (
     <div data-dashboard-theme className={`flex min-h-dvh ${geist.variable}`}>

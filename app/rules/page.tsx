@@ -9,12 +9,12 @@ import { SiteHeader } from '@/components/site/header';
 import { SiteFooter } from '@/components/site/footer';
 import { prisma } from '@/lib/prisma';
 import { MAINTENANCE_SLOT, slotLabel } from '@/lib/slots';
-import { getDefaultVenueId } from '@/lib/tenant';
+import { getRequestVenueId } from '@/lib/request-venue';
 
 export const dynamic = 'force-dynamic';
 
 export default async function RulesPage() {
-  const venue = await prisma.venue.findUnique({ where: { id: await getDefaultVenueId() } });
+  const venue = await prisma.venue.findUnique({ where: { id: await getRequestVenueId() } });
 
   const holdMinutes = venue?.holdMinutes ?? 10;
   const cancellationWindowHours = venue?.cancellationWindowHours ?? 6;
