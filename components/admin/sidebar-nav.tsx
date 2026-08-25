@@ -108,7 +108,12 @@ export function SidebarNav({ role, vertical }: { role: StaffRole; vertical: bool
           ))}
         </div>
         <div>
-          <p className="px-2.5 pb-1 pl-[26px] text-caption font-medium tracking-wide text-text-muted/80 uppercase">
+          {/* Full-opacity text-text-muted, not /80 — the faded version measured
+            * 3.29:1 against the white sidebar (axe: color-contrast), under
+            * WCAG AA's 4.5:1 floor for 12px text. Found by
+            * e2e/accessibility-admin.spec.ts, present on every /admin route
+            * since this label is in the shared layout. */}
+          <p className="px-2.5 pb-1 pl-[26px] text-caption font-medium tracking-wide text-text-muted uppercase">
             Manage
           </p>
           <div className="flex flex-col gap-0.5 pl-3">

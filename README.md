@@ -53,14 +53,14 @@ slow. Section 4 below is the part of this project worth spending the most viva t
 | Framework | Next.js 15, App Router, TypeScript strict | Server Components give first-paint data without a client fetch waterfall; Server Actions give type-safe mutations without hand-rolling REST endpoints. |
 | UI | React 19, Tailwind CSS v4, shadcn/ui (Radix primitives) | Radix gives accessible, unstyled interactive primitives (dialogs, dropdowns, selects); Tailwind's CSS-first `@theme` maps cleanly onto a fixed 9-colour design token system (§13). |
 | Database | PostgreSQL 16 + Prisma 6 | Postgres because the correctness guarantee (§4) needs a **partial unique index**, a feature Prisma's schema DSL cannot express — the migration is hand-written SQL. Prisma for everything else: typed queries, migrations, transactions. |
-| Auth | Auth.js v5, credentials provider, JWT session | No third-party identity provider needed for two internal staff roles; JWT avoids a session table for something this small. |
+| Auth | In-house — bcrypt, server-side `Session` rows, `VerificationToken` | No third-party identity provider — see `SECURITY.md`. A DB-backed session, not a JWT, so deactivating a staff member takes effect on their next request, not whenever a token happens to expire. |
 | Validation | Zod | One schema object is imported by both the client form (`zodResolver`) and the Server Action (`schema.parse()`) — validation cannot drift between the two, because there is only one copy of it. |
 | Forms | React Hook Form | Uncontrolled-by-default form state, pairs directly with Zod via `@hookform/resolvers`. |
 | Dates | date-fns / date-fns-tz | Slot arithmetic is deliberately native `Date` (see §4's timezone note); date-fns-tz is used specifically for *display* formatting, so rendering stays correct in `Asia/Dhaka` independent of the arithmetic layer. |
 | Email | Resend + React Email | A `Notifier` interface abstracts the transport (`lib/notifications/`) so Resend can be swapped for anything else without touching call sites. |
 | Charts | Recharts | Revenue-by-period bar chart on `/admin/reports`. The slot-utilisation heat map is a plain HTML table with computed background colour, not a charting library — a heat map's real content is the *number in each cell*, which a chart library would make harder to keep as accessible text. |
 | Testing | Vitest, Testing Library, Playwright, axe-core | See §10. |
-| Hosting (target) | Vercel + Neon | Serverless Postgres pairs naturally with Vercel's serverless Next.js functions. Not deployed by the current repository state — see [`DEPLOYMENT.md`](./DEPLOYMENT.md). |
+| Hosting (target) | Vercel + Neon | Serverless Postgres pairs naturally with Vercel's serverless Next.js functions — see [`DEPLOYMENT.md`](./DEPLOYMENT.md). |
 
 ## 3. System architecture
 
@@ -69,20 +69,20 @@ flowchart TB
     subgraph Visitors["Public visitor (no account)"]
         V[Browser]
     end
-    subgraph Staff["Staff (ADMIN / MODERATOR)"]
+    subgraph Staff["Staff (OWNER / MANAGER / BOOKIE)"]
         S[Browser]
     end
 
     subgraph App["Next.js 15 application"]
-        MW["middleware.ts\n(guards /admin/*)"]
-        RSC["Server Components\n(first-paint reads)"]
-        SA["Server Actions\napp/actions/*.ts\n(all mutations)"]
-        API["/api/availability\n/api/auth/*\n(JSON + Auth.js only)"]
+        MW["middleware.ts\n(signed-in check only,\nno role, no database read)"]
+        RSC["Server Components\n(first-paint reads,\nrequireRole() at the top of each)"]
+        SA["Server Actions\napp/actions/*.ts\n(all mutations, requireRole() re-checked)"]
+        API["/api/availability\n(JSON only)"]
         ENGINE["lib/booking-engine.ts\n(the ONLY file that writes Booking rows)"]
         PURE["lib/slots.ts + lib/availability.ts\n(pure functions, 100% unit-tested,\nzero next/react/@prisma/client imports)"]
     end
 
-    DB[("PostgreSQL\npartial unique index\non (date, slotIndex)")]
+    DB[("PostgreSQL\npartial unique index\non (venueId, date, slotIndex)")]
 
     V -->|reads| RSC
     V -->|mutations, polling| SA
@@ -100,10 +100,9 @@ flowchart TB
 
 Three rules hold everywhere in the codebase (from `CLAUDE.md` §4):
 
-- **Mutations are Server Actions**, never hand-written POST route handlers (the two exceptions —
-  `/api/auth/*` and the CSV export at `/admin/reports/export` — are route handlers *by necessity*:
-  Auth.js owns its own handler, and a file download cannot be a Server Action, which returns
-  data, not a `Response`).
+- **Mutations are Server Actions**, never hand-written POST route handlers (the CSV export at
+  `/admin/reports/export` is a route handler *by necessity* — a file download returns a
+  `Response`, not the plain data a Server Action returns).
 - **Reads for first paint are Server Components.** `/book/[date]` renders its initial slot grid
   server-side; the client only polls afterwards, to catch a slot someone else just took.
 - **Availability is computed by exactly one function**, `getDayAvailability()` in
@@ -197,11 +196,11 @@ verification is manual by design, see §15) from `/admin/bookings/[id]`, and eit
 - **Rejects it** (`rejectPaymentClaim`) → `Payment.status` flips to `REJECTED` with a reason, and
   the booking is `CANCELLED`, releasing the slot immediately.
 
-If staff do neither, the claim isn't left locking the slot forever: `VenueSetting.paymentVerificationHours`
-(default 24h) is a second, independent deadline on the row, alongside `holdExpiresAt`'s 10 minutes
-for the earlier `HELD` state — the same sweep that expires stale holds also expires stale
-unverified claims, inside every write transaction (`sweepExpiredHolds` in `lib/booking-engine.ts`,
-despite the name predating this feature).
+If staff do neither, the claim isn't left locking the slot forever: `Venue.paymentVerificationHours`
+(default 24h, per-venue) is a second, independent deadline on the row, alongside `holdExpiresAt`'s
+10 minutes for the earlier `HELD` state — the same sweep that expires stale holds also expires
+stale unverified claims, inside every write transaction (`sweepExpiredHolds` in
+`lib/booking-engine.ts`, despite the name predating this feature).
 
 **A second, quieter correctness detail:** Prisma serializes a `@db.Date` column using a JS
 `Date`'s **UTC** year/month/day, not its local ones. Every place in this codebase that builds a
@@ -214,8 +213,18 @@ day.
 
 ## 5. Domain model
 
-Seven entities. `User` is staff only; `Customer` is the public visitor, keyed by phone number,
-and **never authenticates** — there is no Customer login anywhere in the system.
+Seven entities from the original single-venue design below, diagrammed as originally built —
+this part of the model is unchanged. The multi-tenant SaaS layer built on top of it
+(`Tenant`, `Venue`, `VenueStaff`, `PlatformAdmin`, `RegistrationCode`, `Session`,
+`VerificationToken`) is documented in `CLAUDE.md` §11 and in `prisma/schema.prisma`'s own
+extensive doc comments, which are the source of truth for the current full schema — not
+repeated here as a second diagram to keep in sync. In short: `User` now has a `passwordHash` +
+`emailVerifiedAt` instead of a `Role` enum (roles are `OWNER | MANAGER | BOOKIE`, resolved
+per-venue, not stored on `User` at all), and `Booking`/`SlotRule`/`Blackout`/`Payment` each gained
+a required `venueId`.
+
+`User` is staff only; `Customer` is the public visitor, keyed by phone number, and **never
+authenticates** — there is no Customer login anywhere in the system.
 
 ```mermaid
 erDiagram
@@ -231,7 +240,7 @@ erDiagram
         string id PK
         string email UK
         string passwordHash
-        Role role "ADMIN | MODERATOR"
+        string passwordHash "bcrypt, nullable until a password is set"
         boolean isActive
     }
     Customer {
@@ -319,49 +328,66 @@ verification, or cancel something already `CANCELLED`.
 
 ## 7. Route map
 
+Every public and staff route below works both on the bare domain (Venue Zero) and on
+`{slug}.$NEXT_PUBLIC_ROOT_DOMAIN` for any other venue — see §11's subdomain note. Staff roles are
+`OWNER | MANAGER | BOOKIE`, venue-scoped (`CLAUDE.md` §11); `requireRole()` / `requireRoleForPage()`
+enforce every row marked below, never just the sidebar hiding a link.
+
 | Route | Access | Purpose |
 |---|---|---|
-| `/` | Public | Landing page. |
+| `/` | Public | Product marketing site (turf owners), not the booking page — see §11. |
+| `/demo` | Public | Live, no-password demo of the real dashboard — see §11. |
 | `/book` | Public | Redirects to `/book/{today}`. |
 | `/book/[date]` | Public | The booking page: date strip (14-day window) + 16-slot grid, polls for freshness every 30s. |
 | `/book/confirm` | Public | Finish the booking form for a slot already held (10-minute countdown shown). |
 | `/book/success/[ref]` | Public | Receipt after a successful confirmation. |
 | `/booking/lookup` | Public | Find a booking by reference + phone; cancel it if more than 6 hours out. |
-| `/rules` | Public | Venue policy, pulled partly from the database (`VenueSetting`). |
-| `/login` | Public | Staff sign-in. |
-| `/admin` | Staff | Dashboard: the day's 16 slots, current one highlighted, one-tap check-in. |
-| `/admin/calendar` | Staff | Month view, free-slot counts, links into the dashboard per day. |
-| `/admin/bookings` | Staff | Searchable/filterable table of every booking. |
-| `/admin/bookings/[id]` | Staff | One booking: amend, cancel, reschedule, record payment, internal note. |
-| `/admin/bookings/new` | Staff | Counter booking for a walk-in/phone customer. |
-| `/admin/blackouts` | Staff | Close a slot or a whole day ahead of time; warns about affected bookings first. |
-| `/admin/customers` | Staff | Every customer, lifetime totals, no-show count, block/unblock. |
-| `/admin/pricing` | **ADMIN only** | Bulk price editing (weekday/weekend × standard/peak). |
-| `/admin/reports` | **ADMIN only** | Revenue, utilisation heat map, CSV export. |
-| `/admin/users` | **ADMIN only** | Create/disable staff accounts, change roles. |
-| `/admin/audit` | **ADMIN only** | Read-only log of every mutation ever made, with a before/after diff. |
+| `/rules` | Public | Venue policy, pulled from the database (`Venue.rulesText`). |
+| `/sign-in`, `/sign-up`, `/verify-email`, `/forgot-password`, `/reset-password`, `/accept-invite` | Public | In-house auth flows — `SECURITY.md`. |
+| `/onboarding` | Signed in | Redeem a registration code into a new business — invite-only. |
+| `/admin` | Any staff | Dashboard: the day's 16 slots, current one highlighted, one-tap check-in. |
+| `/admin/calendar` | Any staff | Month view, free-slot counts, links into the dashboard per day. |
+| `/admin/bookings` | Any staff | Searchable/filterable table of every booking. |
+| `/admin/bookings/[id]` | Any staff | One booking: amend, cancel, reschedule, internal note. Payment actions require Owner/Manager. |
+| `/admin/bookings/new` | Any staff | Counter booking for a walk-in/phone customer. |
+| `/admin/blackouts` | Any staff | Close a slot or a whole day ahead of time; warns about affected bookings first. |
+| `/admin/customers` | **Owner + Manager** | Every customer, lifetime totals, no-show count, block/unblock. |
+| `/admin/pricing` | **Owner only** | Bulk price editing (weekday/weekend × standard/peak), bKash number, deposit %. |
+| `/admin/staff` | **Owner only** | Invite/deactivate/reassign venue staff. |
+| `/admin/reports` | **Owner + Manager** | Revenue, utilisation heat map, CSV export. |
+| `/admin/audit` | **Owner + Manager** | Read-only log of every mutation ever made, with a before/after diff. |
+| `/super-admin`, `/super-admin/codes`, `/super-admin/tenants` | **Platform admin only** | Issue registration codes, cross-tenant business listing — `requireSuperAdmin()`. |
 | `GET /api/availability?date=` | Public (JSON) | The exact same availability data the pages render, polled by the slot grid. |
-| `GET /admin/reports/export` | **ADMIN only** | CSV download for a date range. |
+| `GET /admin/reports/export` | **Owner + Manager** | CSV download for a date range. |
+| `GET /api/health` | Public | Uptime check — a real `SELECT 1`, not just "the process is up." |
 
-"Staff" means either role, `ADMIN` or `MODERATOR`. `middleware.ts` enforces the split between
-"any staff" and "ADMIN only" at the edge, but **that alone is not treated as authorization** —
-every Server Action that mutates something re-checks the caller's role itself via
-`lib/auth/require-role.ts`, so a bug in the middleware's route matching could never accidentally
-grant a MODERATOR access to an ADMIN-only mutation.
+"Staff" means any of `OWNER | MANAGER | BOOKIE`, venue-scoped. `middleware.ts` only checks that a
+session cookie is present — it does no role check and reads no database (that's a query, and it
+doesn't belong at the edge). **The actual split above is enforced inside every page and Server
+Action itself**, via `requireRole()` / `requireRoleForPage()` (`lib/auth/require-role.ts`), so a
+bug in middleware's route matching could never accidentally grant a Bookie access to an
+Owner-only mutation.
 
 ## 8. Authentication and authorization
 
+In-house — no third-party identity provider. Full threat model, including what's deliberately
+*not* covered, in `SECURITY.md`.
+
 - **Customers never authenticate.** The public flow only ever asks for a phone number (used as
   the natural key for the `Customer` table) and a name.
-- **Staff sign in with Auth.js v5's credentials provider**: email + password, bcrypt (cost 12),
-  an HTTP-only `SameSite=Lax` JWT session cookie (Secure automatically over HTTPS), 8-hour
-  expiry. Login is rate-limited to 10 attempts per 15 minutes per IP
-  (`lib/auth/rate-limit.ts`).
-- **Two roles**, `ADMIN` and `MODERATOR`. `middleware.ts` redirects an unauthenticated visitor to
-  `/login` for anything under `/admin/*`, and redirects a non-ADMIN away from the four
-  ADMIN-only routes. `lib/auth/require-role.ts`'s `requireRole()` is called again inside every
-  single staff Server Action — this double-check is deliberate and tested
-  (`e2e/rbac.spec.ts` drives a real browser session for both roles against every route).
+- **Staff sign in with email + password**: bcrypt (cost 12), a server-side `Session` row (not a
+  JWT — deactivating someone takes effect on their next request, not whenever a token happens to
+  expire) behind an HTTP-only `SameSite=Lax` cookie, 8-hour sliding expiry. Sign-in, sign-up,
+  password reset, and registration-code redemption are all rate-limited per IP
+  (`lib/auth/rate-limit.ts`), and sign-in takes equal time for an unknown email as a wrong
+  password so response latency can't be used to enumerate accounts.
+- **Three roles**, `OWNER | MANAGER | BOOKIE`, venue-scoped — see the route map in §7 for exactly
+  which routes need which. `middleware.ts` only redirects a signed-out visitor to `/sign-in`; it
+  does no role check. `lib/auth/require-role.ts`'s `requireRole()` / `requireRoleForPage()` is
+  called again inside every single page and Server Action — this is the real gate, tested by
+  `e2e/rbac.spec.ts` driving a real signed-in browser session against every route (own throwaway
+  fixture, created directly via Prisma with a known bcrypt password — no external test-instance
+  setup needed).
 
 ## 9. Project structure
 
@@ -383,7 +409,7 @@ app/
   (public routes)           /  /book  /book/[date]  /book/confirm  /book/success/[ref]
                              /booking/lookup  /rules  /login
   admin/                    The staff panel — see the route map above.
-  api/                      /api/availability (JSON), /api/auth/* (Auth.js).
+  api/                      /api/availability (JSON), /api/health (uptime check).
 components/
   booking/                  Public-flow client components (SlotGrid, SlotCard, HoldTimer, ...).
   admin/                    Admin-panel client components (ConfirmDialog, forms, charts, ...).
@@ -394,7 +420,7 @@ prisma/
   schema.prisma             The data model (see §5). The partial index is NOT expressible here —
                              see the note at the bottom of the file.
   migrations/                Includes the hand-edited migration with the real partial index SQL.
-  seed.ts                   112 SlotRule rows, one ADMIN + one MODERATOR user, VenueSetting.
+  seed.ts                   112 SlotRule rows + Venue Zero. No staff accounts — see §11.
 ```
 
 ## 10. Testing strategy
@@ -403,7 +429,7 @@ prisma/
 |---|---|---|---|
 | Pure logic | Vitest | `lib/slots.ts` and `lib/availability.ts` at **100% statement/branch/function/line coverage** — the slot-15 label trap, the maintenance-slot invariant, the past-vs-booked check order, all 5 slot states. | `pnpm test:coverage` |
 | Concurrency | Playwright, real Postgres | 20 simultaneous bookings at one slot, exactly 1 wins, verified both via the promises and a direct re-query of the database. | `pnpm e2e` (`e2e/concurrency.spec.ts`) |
-| Authorization | Playwright, real browser sessions | Unauthenticated, MODERATOR, and ADMIN sessions each checked against every `/admin/*` route. | `pnpm e2e` (`e2e/rbac.spec.ts`) |
+| Authorization | Playwright, real browser sessions | Unauthenticated, BOOKIE, and OWNER sessions each checked against every `/admin/*` route — own throwaway Prisma-seeded fixture, real `/sign-in` form, no mocking. | `pnpm e2e` (`e2e/rbac.spec.ts`) |
 | Accessibility | Playwright + axe-core | Every public route and the full admin panel, tagged `wcag2a`/`wcag2aa`, fails the build on any `critical`/`serious` violation. Three real violations were found and fixed this way (see the git log), not synthetic examples. | `pnpm e2e` (`e2e/accessibility*.spec.ts`) |
 | Types | `tsc --noEmit`, strict mode | No `any` escapes, exhaustive discriminated unions on booking status. | `pnpm typecheck` |
 
@@ -430,21 +456,27 @@ included; a native Postgres install works just as well — that's what this repo
 actually developed against).
 
 ```bash
-cp .env.example .env        # fill in DATABASE_URL and your Clerk keys
+cp .env.example .env.local  # fill in DATABASE_URL (see the file's own notes)
 docker compose up -d        # or point DATABASE_URL at your own Postgres
 pnpm install
 pnpm prisma migrate deploy  # applies the partial-index migration as-is — do not regenerate it
-pnpm db:seed                # 112 SlotRule rows, one ADMIN + one MODERATOR user, VenueSetting
+pnpm db:seed                # 112 SlotRule rows + Venue Zero — no staff accounts, see below
 pnpm dev
 ```
 
-Seeded staff logins (override with `SEED_ADMIN_PASSWORD` / `SEED_MODERATOR_PASSWORD` before
-seeding anything that isn't a throwaway local database):
+There is no seeded staff login — auth is in-house (`SECURITY.md`), and a seed script cannot
+invent a real credential. Bootstrap your own:
 
-| Email | Password | Role |
-|---|---|---|
-| `admin@turf.local` | `Admin123!` | ADMIN |
-| `moderator@turf.local` | `Moderator123!` | MODERATOR |
+```bash
+# 1. Sign up normally at /sign-up, verify the email link the console prints.
+# 2. Grant yourself platform admin (also makes you Tenant Zero's owner):
+pnpm exec tsx scripts/grant-platform-admin.ts you@example.com
+```
+
+Want a fully populated dashboard to look at immediately instead — bookings, customers, a
+payment-verification queue — without setting anything up? `pnpm exec tsx scripts/create-demo-venue.ts`
+seeds a second, separate demo venue reachable at `/demo` with an instant, no-password login for
+all three roles. See `lib/demo.ts`'s header comment before touching anything demo-related.
 
 Other scripts:
 
@@ -458,20 +490,22 @@ pnpm prisma:studio     # inspect the database visually
 
 ## 12. Environment variables
 
-All of them, no secrets in code:
+`.env.example` is the source of truth, with inline notes on each. Summary:
 
 ```
-DATABASE_URL                 Postgres connection string
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY   Clerk publishable key (pk_test_… / pk_live_…)
-CLERK_SECRET_KEY             Clerk secret key (sk_test_… / sk_live_…)
-RESEND_API_KEY                Only read in production; dev uses ConsoleNotifier regardless
-SMS_API_KEY                   Reserved — no SMS provider is wired up (email-only Notifier today)
+DATABASE_URL                 Postgres — DIRECT connection string, not the pooled one (CLAUDE.md §10)
+NEXT_PUBLIC_SITE_URL          Used to build absolute links in auth emails
+NEXT_PUBLIC_ROOT_DOMAIN       Root domain for venue subdomains ({slug}.$THIS)
+LOOPS_API_KEY                 Transactional email (verify/reset/invite) — unset logs to console
+LOOPS_TXN_*                   One Loops transactionalId per auth-email kind — see lib/notifications/auth-email.ts
+RESEND_API_KEY                Booking-notification email; only read in production
+SMS_API_KEY                    Reserved — no SMS provider is wired up
 NOTIFICATIONS_ENABLED         'false' -> NoopNotifier (safe default for local dev)
-HOLD_MINUTES                  10
-CANCELLATION_WINDOW_HOURS     6
-BOOKING_WINDOW_DAYS           14
 TZ                            Asia/Dhaka — the whole app assumes this; see §4's timezone note
 ```
+
+`HOLD_MINUTES` / `CANCELLATION_WINDOW_HOURS` / `BOOKING_WINDOW_DAYS` are no longer env vars — they
+are per-venue columns on `Venue`, editable from the dashboard, per venue.
 
 ## 13. Design system
 
@@ -550,9 +584,10 @@ The order this project's `BUILD_PLAN.md` recommends presenting it in (roughly tw
 2. **Run the concurrency test live**: `pnpm e2e -g concurrency`. Twenty requests, one wins.
    Explain the partial unique index. *(Lead with this if short on time — it is the single most
    convincing thing in the project.)*
-3. **Log in as MODERATOR, try `/admin/pricing`.** Get refused.
-4. **Log in as ADMIN, create a blackout** on tomorrow's evening slot. Refresh the public page —
-   it is gone immediately.
+3. **Log in as a Bookie, try `/admin/pricing`.** Get refused — with a clean "you don't have
+   permission" banner, not a stack trace (`lib/auth/require-role-for-page.ts`).
+4. **Log in as the Owner, create a blackout** on tomorrow's evening slot. Refresh the public page
+   — it is gone immediately.
 5. **Show the utilisation heat map** on `/admin/reports`. Point at a dead slot and say what
    you'd price it at.
 6. **Show `lib/slots.ts` and its test file**, and the coverage report. Explain why it imports

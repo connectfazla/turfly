@@ -8,7 +8,17 @@ import { formatDateParam } from '../lib/format';
 
 const today = formatDateParam(new Date());
 
-const PUBLIC_ROUTES = ['/', '/book', `/book/${today}`, '/booking/lookup', '/rules'];
+const PUBLIC_ROUTES = [
+  '/',
+  '/book',
+  `/book/${today}`,
+  '/booking/lookup',
+  '/rules',
+  '/demo',
+  '/sign-in',
+  '/sign-up',
+  '/forgot-password',
+];
 
 test.describe('accessibility — public routes', () => {
   for (const route of PUBLIC_ROUTES) {

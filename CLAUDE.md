@@ -233,6 +233,15 @@ protect a Server Action.
 - Order of checks in availability matters: maintenance → blackout → booked → past → rule. Getting this wrong makes the 06:00 slot read as merely "blocked", and makes completed late-night bookings read as "past".
 - Serialisable transactions can abort under contention. Retry once before surfacing an error.
 - **`DATABASE_URL` must be Neon's DIRECT (non-`-pooler`) connection string, not the pooled one.** Neon's `-pooler` endpoint runs PgBouncer in transaction-pooling mode, which does not reliably support Prisma's interactive `$transaction()` API — every write in `lib/booking-engine.ts` uses it (`runSerializable`). Using the pooled URL fails with `P2028: Transaction not found`, non-deterministically, at whichever query happens to be in flight when the pool reassigns the connection. Confirmed by reproducing outside Next.js entirely. Separately, `runSerializable`'s transaction `timeout`/`maxWait` were widened (15s/5s, was Prisma's 5s/2s default) because this Neon compute's per-query round-trip latency, multiplied across `holdSlot`'s ~8 sequential queries, was already close to the default budget even on the direct connection.
+- **A test that queries or deletes `Booking` rows by `(date, slotIndex)` alone, without a
+  `venueId` filter, is a latent cross-tenant bug in the test itself.** `e2e/concurrency.spec.ts`
+  had three such unscoped spots — a `cleanUp()` shared between tests with no venue filter, and two
+  `findMany` assertion queries — that worked fine with one venue and silently reached across every
+  other tenant's data the moment a second venue existed. Found when `cleanUp()` tried to delete a
+  booking belonging to `scripts/create-demo-venue.ts`'s seeded venue, which had a `Payment` row
+  (`RESTRICT`, not `CASCADE`) and refused the delete — a lucky loud failure; an unscoped `findMany`
+  would have failed silently by miscounting instead. Scope every query in a multi-tenant test by
+  the specific venue ids that test created, never by date/slot alone.
 - **Reference allocation must happen AFTER the booking insert, not before.** `VenueReferenceCounter` is one row per venue per year, so every concurrent booking for a venue contends on it. Reserving the number first funnels all N racing transactions through that single row lock and they time out (`P2028`) instead of failing cleanly on the slot index; the booking is inserted with a throwaway UUID reference and renamed immediately after, so only the transaction that already won the slot ever touches the counter. Measured at 20-way contention: 1 success / 16 SlotTaken / 3 raw P2028 with the counter first, 1 / 19 / 0 with it last.
 - **`tsc --noEmit` passing does NOT mean `next build` will pass.** `next build`'s "Linting and checking validity of types" step also runs ESLint (e.g. `react/no-unescaped-entities` — a bare `'` inside JSX text, not `&apos;`), which `tsc` alone never catches. Before pushing anything that touches JSX text content, run the real `pnpm run build` (matching what Vercel runs) at least once, not just `tsc --noEmit` — a build that only fails on Vercel and not locally wastes a deploy cycle finding out.
 
@@ -289,7 +298,15 @@ pnpm exec tsx scripts/verify-onboarding.ts
 pnpm exec tsx scripts/verify-role-matrix.ts           # the "staff can't see money" promise
 pnpm exec tsx scripts/create-test-venue.ts            # second tenant, for isolation tests
 pnpm exec playwright test e2e/concurrency.spec.ts     # both halves of the index guarantee
+pnpm exec playwright test e2e/rbac.spec.ts            # real signed-in sessions, own Prisma fixture
 ```
+
+`e2e/rbac.spec.ts` and `e2e/accessibility-admin.spec.ts` each create a throwaway
+Tenant/Venue/User fixture directly via Prisma (known bcrypt password, no external test-instance
+setup needed) and sign in through the real `/sign-in` form. `playwright.config.ts` runs `pnpm
+start` (the production build) in CI and `pnpm dev` locally — `next dev`'s on-demand route
+compilation was racing server-side redirects and surfacing as flaky `net::ERR_ABORTED` navigation
+errors when tested against it directly.
 
 First platform admin on a fresh database: sign up at `/sign-up`, then
 `pnpm exec tsx scripts/grant-platform-admin.ts you@example.com`.

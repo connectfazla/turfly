@@ -7,15 +7,15 @@ on:
 
 env:
   DATABASE_URL: postgresql://turf:turf@localhost:5432/turf_booking?schema=public
-  AUTH_SECRET: ci-only-secret-not-for-production-use-generate-a-real-one
-  AUTH_URL: http://localhost:3000
+  NEXT_PUBLIC_SITE_URL: http://localhost:3000
+  NEXT_PUBLIC_ROOT_DOMAIN: turfly.app
   NOTIFICATIONS_ENABLED: 'false'
-  HOLD_MINUTES: '10'
-  CANCELLATION_WINDOW_HOURS: '6'
-  BOOKING_WINDOW_DAYS: '14'
   TZ: Asia/Dhaka
-  SEED_ADMIN_PASSWORD: ci-admin-password-123
-  SEED_MODERATOR_PASSWORD: ci-moderator-password-123
+  # LOOPS_API_KEY intentionally unset: auth emails (verify/reset/invite) log
+  # to the server console instead of sending — e2e/rbac.spec.ts and
+  # e2e/accessibility-admin.spec.ts create their test accounts directly via
+  # Prisma with a known password, so no real email ever needs to be
+  # delivered in CI.
 
 jobs:
   # typecheck, lint, unit tests — the coverage gate on lib/slots.ts and
