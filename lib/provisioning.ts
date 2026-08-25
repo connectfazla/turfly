@@ -59,9 +59,9 @@ const VENUE_ZERO_SLUG = 'default';
  * IDEMPOTENT: makes sure "Tenant Zero" and its "Venue Zero" exist, and
  * returns the venue's id.
  *
- * Venue Zero is the pre-SaaS physical venue — it predates onboarding, so it
- * has no Clerk Organization and its tenant's clerkOrgId stays null until the
- * operator is bound (scripts/bind-operator-clerk-user.ts).
+ * Venue Zero is the pre-SaaS physical venue — it predates onboarding, so its
+ * tenant has no owner account until one is granted
+ * (scripts/grant-platform-admin.ts).
  *
  * This has to run BEFORE any SlotRule is seeded. Before Migration B the
  * ordering was the other way round (seed rules with a null venueId, then
@@ -98,7 +98,8 @@ export async function ensureDefaultVenue(db: PrismaClient): Promise<string> {
 // ------------------------------------------------------- tenant provisioning
 
 export interface ProvisionTenantInput {
-  clerkUserId: string;
+  /** The already-signed-in owner's User.id. */
+  ownerUserId: string;
   ownerName: string;
   ownerEmail: string;
   businessName: string;
@@ -145,7 +146,7 @@ export async function provisionTenant(
   // second one. Tenant.ownerClerkUserId is UNIQUE, so this is belt to the
   // database's braces, not a substitute for it.
   const existing = await prisma.tenant.findUnique({
-    where: { ownerClerkUserId: input.clerkUserId },
+    where: { ownerUserId: input.ownerUserId },
     select: { id: true, venues: { select: { id: true, slug: true, code: true }, take: 1 } },
   });
   if (existing?.venues[0]) {
@@ -170,7 +171,7 @@ export async function provisionTenant(
           const tenant = await tx.tenant.create({
             data: {
               name: input.businessName,
-              ownerClerkUserId: input.clerkUserId,
+              ownerUserId: input.ownerUserId,
               ownerEmail: input.ownerEmail,
             },
           });
@@ -189,27 +190,15 @@ export async function provisionTenant(
 
           await seedSlotRulesForVenue(tx, venue.id);
 
-          // The owner's local User row. invitedEmail is set to their verified
-          // Clerk address and clerkUserId is bound immediately — they are
-          // standing right here, already authenticated, so there is nothing
-          // to invite. Every booking they take and every audit entry they
-          // generate points at this row.
-          const user = await tx.user.upsert({
-            where: { email: input.ownerEmail },
-            update: { clerkUserId: input.clerkUserId, name: input.ownerName, isActive: true },
-            create: {
-              clerkUserId: input.clerkUserId,
-              email: input.ownerEmail,
-              invitedEmail: input.ownerEmail,
-              name: input.ownerName,
-              isActive: true,
-            },
-          });
+          // The owner's User row already exists — they signed up and verified
+          // before reaching onboarding. Fetched rather than created so the
+          // audit entries below can be attributed to them.
+          const user = await tx.user.findUniqueOrThrow({ where: { id: input.ownerUserId } });
 
           // Phase 2 of the code's lifecycle. Scoped to this claimant, so a
           // code held by somebody else cannot be completed here.
           const bound = await tx.registrationCode.updateMany({
-            where: { code: input.registrationCode, redeemedByClerkUserId: input.clerkUserId, tenantId: null },
+            where: { code: input.registrationCode, redeemedByUserId: input.ownerUserId, tenantId: null },
             data: { tenantId: tenant.id },
           });
           if (bound.count !== 1) {
@@ -248,9 +237,14 @@ export async function provisionTenant(
             alreadyExisted: false,
           };
         },
-        // Same widened budget as the booking engine: this is ~7 statements
-        // against Neon, and the default 5s is uncomfortably close.
-        { timeout: 15_000, maxWait: 5_000 },
+        // 30s, wider than the booking engine's 15s, for a reason specific to
+        // this path: Neon auto-suspends an idle compute, and provisioning is
+        // frequently the FIRST query after a quiet period — a new owner
+        // signing up is by definition not part of steady traffic. A cold
+        // start observed here took 22.7s end to end and blew a 15s budget.
+        // This runs once per tenant, ever, so a generous ceiling costs
+        // nothing and a timeout costs an owner their signup.
+        { timeout: 30_000, maxWait: 10_000 },
       );
     } catch (err) {
       lastError = err;

@@ -98,7 +98,7 @@ export interface ClaimedCode {
  */
 export async function claimRegistrationCode(
   rawInput: string,
-  clerkUserId: string,
+  userId: string,
   now: Date = new Date(),
 ): Promise<ClaimedCode> {
   const code = normalizeRegistrationCode(rawInput);
@@ -109,7 +109,7 @@ export async function claimRegistrationCode(
 
   // Resume path — checked before the claim, and scoped to this same user so
   // it can never hand someone else's in-flight code over.
-  if (existing.redeemedByClerkUserId === clerkUserId && existing.tenantId === null && !existing.revokedAt) {
+  if (existing.redeemedByUserId === userId && existing.tenantId === null && !existing.revokedAt) {
     return { code: existing.code, display: existing.display, resumed: true };
   }
 
@@ -120,7 +120,7 @@ export async function claimRegistrationCode(
       revokedAt: null,
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
     },
-    data: { redeemedAt: now, redeemedByClerkUserId: clerkUserId },
+    data: { redeemedAt: now, redeemedByUserId: userId },
   });
   if (claimed.count !== 1) throw new InvalidRegistrationCodeError();
 
@@ -130,14 +130,14 @@ export async function claimRegistrationCode(
 /**
  * Releases a claim after onboarding failed, so the code is usable again.
  *
- * Scoped to `redeemedByClerkUserId` and `tenantId: null`: it can only ever
+ * Scoped to `redeemedByUserId` and `tenantId: null`: it can only ever
  * release a claim the SAME user still holds, and never one that already
  * produced a business.
  */
-export async function releaseRegistrationCode(code: string, clerkUserId: string): Promise<void> {
+export async function releaseRegistrationCode(code: string, userId: string): Promise<void> {
   await prisma.registrationCode.updateMany({
-    where: { code, redeemedByClerkUserId: clerkUserId, tenantId: null },
-    data: { redeemedAt: null, redeemedByClerkUserId: null },
+    where: { code, redeemedByUserId: userId, tenantId: null },
+    data: { redeemedAt: null, redeemedByUserId: null },
   });
 }
 
@@ -147,11 +147,11 @@ export async function releaseRegistrationCode(code: string, clerkUserId: string)
  */
 export async function completeRegistrationCode(
   code: string,
-  clerkUserId: string,
+  userId: string,
   tenantId: string,
 ): Promise<void> {
   const done = await prisma.registrationCode.updateMany({
-    where: { code, redeemedByClerkUserId: clerkUserId, tenantId: null },
+    where: { code, redeemedByUserId: userId, tenantId: null },
     data: { tenantId },
   });
   if (done.count !== 1) throw new InvalidRegistrationCodeError();

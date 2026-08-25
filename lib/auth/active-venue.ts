@@ -48,11 +48,9 @@ export class VenueNotSelectedError extends Error {
  * mean something.
  */
 export async function accessibleVenueIds(user: User): Promise<string[]> {
-  if (!user.clerkUserId) return [];
-
   const isPlatformAdmin = await prisma.platformAdmin.findUnique({
-    where: { clerkUserId: user.clerkUserId },
-    select: { clerkUserId: true },
+    where: { userId: user.id },
+    select: { userId: true },
   });
 
   const venues = await prisma.venue.findMany({
@@ -61,7 +59,7 @@ export async function accessibleVenueIds(user: User): Promise<string[]> {
       : {
           isActive: true,
           OR: [
-            { tenant: { ownerClerkUserId: user.clerkUserId } },
+            { tenant: { ownerUserId: user.id } },
             { staff: { some: { userId: user.id, isActive: true } } },
           ],
         },

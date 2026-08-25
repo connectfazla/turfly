@@ -146,14 +146,14 @@ async function main() {
     // Mirrors lib/auth/active-venue.ts. The operator is a PlatformAdmin and
     // therefore reaches BOTH venues, which is exactly the case that would
     // otherwise resolve to "ambiguous" and lock them out of /admin.
-    async function accessible(clerkUserId: string, userId: string) {
-      const isPA = await prisma.platformAdmin.findUnique({ where: { clerkUserId } });
+    async function accessible(userId: string) {
+      const isPA = await prisma.platformAdmin.findUnique({ where: { userId } });
       const venues = await prisma.venue.findMany({
         where: isPA
           ? { isActive: true }
           : {
               isActive: true,
-              OR: [{ tenant: { ownerClerkUserId: clerkUserId } }, { staff: { some: { userId, isActive: true } } }],
+              OR: [{ tenant: { ownerUserId: userId } }, { staff: { some: { userId, isActive: true } } }],
             },
         select: { id: true },
         orderBy: { createdAt: 'asc' },
@@ -161,9 +161,11 @@ async function main() {
       return venues.map((v) => v.id);
     }
 
-    const operator = await prisma.user.findFirst({ where: { clerkUserId: { not: null } } });
-    if (operator?.clerkUserId) {
-      const allowed = await accessible(operator.clerkUserId, operator.id);
+    const operator = await prisma.user.findFirst({
+      where: { platformAdmin: { isNot: null } },
+    });
+    if (operator) {
+      const allowed = await accessible(operator.id);
       const resolved = allowed.length === 1 ? allowed[0] : allowed.includes(venueZero.id) ? venueZero.id : null;
       check(
         'the operator still resolves to a venue despite reaching several',
@@ -177,7 +179,7 @@ async function main() {
     // has been made reachable and every check above is proving less than it
     // appears to.
     const testOwnerReach = await prisma.venue.count({
-      where: { tenant: { ownerClerkUserId: 'user_TESTVENUE000000000000000' } },
+      where: { tenant: { ownerUserId: null }, slug: 'test-venue' },
     });
     check('the test venue has exactly one unreachable owner', testOwnerReach === 1, `count=${testOwnerReach}`);
   }

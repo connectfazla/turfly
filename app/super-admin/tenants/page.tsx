@@ -44,11 +44,11 @@ export default async function TenantsPage() {
                     {t.ownerEmail ?? 'no owner email'} · joined {formatDateLong(t.createdAt)}
                   </p>
                 </div>
-                {t.clerkOrgId ? null : (
-                  // Tenant Zero predates onboarding and has no Clerk org. Worth
-                  // showing rather than hiding: it explains why this one row
-                  // behaves differently from every other business.
-                  <Badge className="bg-surface-muted text-text-muted">legacy · no organization</Badge>
+                {t.ownerUserId ? null : (
+                  // Tenant Zero predates onboarding and has no owner account.
+                  // Worth showing rather than hiding: it explains why this one
+                  // row behaves differently from every other business.
+                  <Badge className="bg-surface-muted text-text-muted">legacy · no owner account</Badge>
                 )}
               </div>
               <div className="divide-y divide-border">

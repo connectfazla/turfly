@@ -13,11 +13,10 @@
  * "does venue A leak into venue B" is a question that can be answered
  * before a real customer is the one asking it.
  *
- * The tenant it creates is deliberately owned by a Clerk user id that
- * cannot exist (`user_TESTVENUE...`), so no real signed-in person resolves
- * to OWNER on it. That matters: if it were owned by the operator, every
- * isolation check would pass trivially via the PlatformAdmin/owner path and
- * prove nothing.
+ * The tenant it creates has NO owner account, so no real signed-in person
+ * resolves to OWNER on it. That matters: if it were owned by the operator,
+ * every isolation check would pass trivially via the PlatformAdmin/owner
+ * path and prove nothing.
  *
  * Safe against production data — it only ever touches rows belonging to the
  * venue whose slug is TEST_VENUE_SLUG, and --destroy refuses to run if any
@@ -31,8 +30,8 @@ const prisma = new PrismaClient();
 const TEST_TENANT_NAME = 'Test Tenant (isolation fixture)';
 const TEST_VENUE_SLUG = 'test-venue';
 const TEST_VENUE_CODE = 'TSTV';
-/** Intentionally not a real Clerk id — see the header comment. */
-const TEST_OWNER_CLERK_ID = 'user_TESTVENUE000000000000000';
+/** Intentionally not a real User id — see the header comment. */
+const TEST_OWNER_USER_ID = null;
 
 async function destroy() {
   const venue = await prisma.venue.findUnique({ where: { slug: TEST_VENUE_SLUG } });
@@ -68,7 +67,10 @@ async function create() {
     const tenant = await prisma.tenant.create({
       data: {
         name: TEST_TENANT_NAME,
-        ownerClerkUserId: TEST_OWNER_CLERK_ID,
+        // No owner account at all, which is the point: nobody can sign in
+        // and resolve to OWNER on this tenant, so every isolation check has
+        // to pass on its own merits rather than via the owner shortcut.
+        ownerUserId: TEST_OWNER_USER_ID,
         ownerEmail: 'owner@test-venue.invalid',
       },
     });

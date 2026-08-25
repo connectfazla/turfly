@@ -1,8 +1,9 @@
 import Link from 'next/link';
 import { Geist } from 'next/font/google';
-import { UserButton } from '@clerk/nextjs';
+import { LogOut } from 'lucide-react';
 import { getVenueName } from '@/lib/venue';
 import { requireRole } from '@/lib/auth/require-role';
+import { signOutAction } from '@/app/actions/auth';
 import { SidebarNav } from '@/components/admin/sidebar-nav';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
@@ -30,27 +31,43 @@ function roleLabel(role: 'OWNER' | 'MANAGER' | 'BOOKIE'): string {
 }
 
 /** Shown to a signed-in person who simply isn't staff here. This is a
- * routine outcome, not an error: any customer with a Clerk account can
- * reach /admin by typing it, and Clerk's own account menu is one of the
- * few places they might. A stack trace would be both alarming and useless
- * to them, so this is a plain dead end with a way back. */
+ * routine outcome, not an error: anyone with an account can reach /admin by
+ * typing it. A stack trace would be both alarming and useless to them, so
+ * this is a plain dead end with a way back. */
 function NoAccess() {
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-surface px-4 text-center">
+    <div className="bg-surface flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center">
       <div>
         <h1 className="text-heading text-text">Staff access only</h1>
-        <p className="mt-1 max-w-sm text-body text-text-muted">
-          You&apos;re signed in, but this account isn&apos;t staff at this venue. If that seems wrong, ask the venue
-          owner to invite you.
+        <p className="text-body text-text-muted mt-1 max-w-sm">
+          You&apos;re signed in, but this account isn&apos;t staff at this venue. If that seems
+          wrong, ask the venue owner to invite you.
         </p>
       </div>
       <Link
         href="/"
-        className="rounded-(--radius-input) bg-accent px-4 py-2 text-body text-white transition-colors hover:bg-accent/90"
+        className="bg-accent text-body hover:bg-accent/90 rounded-(--radius-input) px-4 py-2 text-white transition-colors"
       >
         Back to booking
       </Link>
     </div>
+  );
+}
+
+/** Sign-out as a Server Action form, so it works without client JS and needs
+ * no session state in the browser. */
+function SignOutButton() {
+  return (
+    <form action={signOutAction}>
+      <button
+        type="submit"
+        className="text-text-muted hover:bg-surface-muted hover:text-danger flex size-8 items-center justify-center rounded-full transition-colors"
+        aria-label="Sign out"
+        title="Sign out"
+      >
+        <LogOut className="size-4" aria-hidden="true" />
+      </button>
+    </form>
   );
 }
 
@@ -82,46 +99,50 @@ export default async function AdminLayout({ children }: { children: React.ReactN
        * screen) - only <main> scrolls, matching how every real dashboard
        * shell behaves; without this the footer (sign-out) drifted off
        * the bottom of the screen on any page taller than the viewport. */}
-      <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-border bg-surface md:flex">
+      <aside className="border-border bg-surface sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r md:flex">
         <div className="flex items-center gap-2.5 px-5 py-5">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-accent text-caption font-semibold text-white">
+          <div className="bg-accent text-caption flex size-7 shrink-0 items-center justify-center rounded-lg font-semibold text-white">
             {venueName.slice(0, 1).toUpperCase()}
           </div>
-          <Link href="/admin" className="truncate text-subheading font-semibold tracking-tight text-text">
+          <Link
+            href="/admin"
+            className="text-subheading text-text truncate font-semibold tracking-tight"
+          >
             {venueName}
           </Link>
         </div>
         <div className="flex-1 overflow-y-auto px-3 pb-3">
           <SidebarNav isAdmin={isOwner} vertical />
         </div>
-        {/* Clerk's UserButton owns sign-out, account management and the
-          * session menu, so the hand-rolled dropdown is gone. The avatar +
-          * name/role block beside it stays: UserButton alone renders only a
-          * small circle, which loses the "who am I signed in as" the counter
-          * staff read at a glance. */}
-        <div className="flex items-center gap-2.5 border-t border-border p-3">
+        {/* The name/role block is not decoration: counter machines get
+         * shared, and "who am I signed in as" is the thing staff need to
+         * check before they take money on somebody else's account. */}
+        <div className="border-border flex items-center gap-2.5 border-t p-3">
           <Avatar>
             <AvatarFallback>{initials(staff.name)}</AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-body font-medium text-text">{staff.name}</p>
-            <p className="truncate text-caption text-text-muted">{roleLabel(staff.role)}</p>
+            <p className="text-body text-text truncate font-medium">{staff.name}</p>
+            <p className="text-caption text-text-muted truncate">{roleLabel(staff.role)}</p>
           </div>
-          <UserButton />
+          <SignOutButton />
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile only (< md): the old top-bar + horizontal-scroll nav,
          * unchanged in behavior from before the sidebar existed. */}
-        <header className="border-b border-border bg-surface md:hidden">
+        <header className="border-border bg-surface border-b md:hidden">
           <div className="flex h-14 items-center justify-between gap-3 px-4">
-            <Link href="/admin" className="shrink-0 text-subheading font-semibold tracking-tight text-text">
+            <Link
+              href="/admin"
+              className="text-subheading text-text shrink-0 font-semibold tracking-tight"
+            >
               {venueName}
             </Link>
-            <div className="flex items-center gap-3 text-caption text-text-muted">
+            <div className="text-caption text-text-muted flex items-center gap-3">
               <span>{roleLabel(staff.role)}</span>
-              <UserButton />
+              <SignOutButton />
             </div>
           </div>
           <div className="overflow-x-auto px-4 pb-3">

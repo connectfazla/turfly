@@ -1,56 +1,40 @@
-import { clerkMiddleware } from '@clerk/nextjs/server';
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
+import { SESSION_COOKIE } from '@/lib/auth/constants';
 
 /**
- * Every staff/owner/platform surface. Middleware's ONLY job here is "is
- * somebody signed in" — it deliberately does no role check and reads no
- * database.
+ * Redirect convenience ONLY — this is not the authorisation boundary.
  *
- * The role check used to live here as an ADMIN_ONLY_PREFIXES list. It
- * moved to the pages themselves (`await requireRole('OWNER')` at the top of
- * each) because a role is now resolved from Tenant/VenueStaff/PlatformAdmin
- * rows, and a per-request Prisma query in middleware is both slow and the
- * wrong place for it. Four single-file routes, four one-line guards,
- * colocated with what they protect — which is what CLAUDE.md §7 asks for
- * anyway ("re-check the role inside every action — middleware alone is not
- * authorisation").
+ * It checks for the mere PRESENCE of a session cookie, not its validity: it
+ * runs on the edge of every request and cannot afford a database round trip,
+ * and a forged cookie gets past it. That is fine, because the real gate is
+ * `requireRole()` / `requireSuperAdmin()` inside every page and Server Action
+ * beneath these paths, which resolves the session and the caller's grants
+ * against the database (CLAUDE.md §7).
+ *
+ * What this buys is a tidy redirect to sign-in instead of an error page for
+ * the ordinary signed-out visitor. If it ever missed a route, the page would
+ * still refuse — just less gracefully.
  */
 const PROTECTED_PREFIXES = ['/admin', '/dashboard', '/super-admin', '/onboarding'];
 
-/**
- * Plain prefix matching rather than Clerk's createRouteMatcher, which is
- * deprecated: it warns that path matching in middleware can diverge from
- * how Next.js actually routes a request, leaving a protected resource
- * reachable. That warning is exactly right, and the answer is not a better
- * matcher — it is to not rely on this as the authorisation boundary at all.
- *
- * What this does is a redirect convenience: send a signed-out visitor to
- * sign-in instead of letting them hit a page that throws. The ACTUAL gate
- * is resource-based, in app/admin/layout.tsx and in every page and Server
- * Action beneath it, all of which call requireRole() against the database.
- * If this matcher ever missed a route, the page would still refuse — it
- * would just refuse with an error instead of a tidy redirect.
- */
-export default clerkMiddleware(async (clerkAuth, req) => {
+export default function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
-  if (isProtected) {
-    await clerkAuth.protect();
+
+  if (isProtected && !req.cookies.get(SESSION_COOKIE)) {
+    const url = new URL('/sign-in', req.nextUrl.origin);
+    // Only ever a path, never a full URL — so this cannot be used to bounce
+    // somebody to another origin after they sign in.
+    url.searchParams.set('next', pathname);
+    return NextResponse.redirect(url);
   }
+
   return NextResponse.next();
-});
+}
 
 export const config = {
   matcher: [
-    // Clerk's recommended default: skip Next.js internals and static
-    // assets, always run for API/tRPC routes.
     '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
     '/(api|trpc)(.*)',
-    '/__clerk/:path*',
   ],
-  // Node.js runtime rather than Edge: Clerk supports it, and it keeps the
-  // door open for middleware that needs Node APIs. (It was originally set
-  // to silence an Auth.js/jose warning; that reason is gone, the setting is
-  // still the right default here.)
-  runtime: 'nodejs',
 };

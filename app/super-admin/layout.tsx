@@ -5,8 +5,8 @@
  */
 import Link from 'next/link';
 import { Geist } from 'next/font/google';
-import { UserButton } from '@clerk/nextjs';
 import { requireSuperAdmin } from '@/lib/auth/require-super-admin';
+import { signOutAction } from '@/app/actions/auth';
 
 const geist = Geist({ variable: '--font-geist', subsets: ['latin'], display: 'swap' });
 
@@ -58,7 +58,11 @@ export default async function SuperAdminLayout({ children }: { children: React.R
               </Link>
             </nav>
           </div>
-          <UserButton />
+          <form action={signOutAction}>
+            <button type="submit" className="text-caption text-text-muted transition-colors hover:text-danger">
+              Sign out
+            </button>
+          </form>
         </div>
       </header>
       <main className="mx-auto w-full max-w-[1180px] px-4 py-8 md:px-8">{children}</main>

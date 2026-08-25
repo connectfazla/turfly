@@ -29,18 +29,34 @@ function check(pass: boolean, label: string) {
   if (!pass) failures++;
 }
 
-async function issueAndClaim(clerkUserId: string) {
+/** A throwaway User row — provisioning now requires the owner to already
+ * exist, because they signed up and verified before reaching onboarding. */
+async function makeUser(suffix: string) {
+  const user = await prisma.user.create({
+    data: {
+      email: `${PREFIX}${suffix}@example.invalid`,
+      name: `Test ${suffix}`,
+      passwordHash: 'x',
+      emailVerifiedAt: new Date(),
+    },
+  });
+  madeUsers.push(user.id);
+  return user;
+}
+
+async function issueAndClaim(userId: string) {
   const { code, display } = generateRegistrationCode();
+  const issuer = await prisma.user.findFirstOrThrow({ where: { email: { startsWith: PREFIX } } });
   await prisma.registrationCode.create({
-    data: { code, display, createdByClerkUserId: 'user_VERIFY_ONBOARDING' },
+    data: { code, display, createdByUserId: issuer.id },
   });
   madeCodes.push(code);
-  await claimRegistrationCode(display, clerkUserId);
+  await claimRegistrationCode(display, userId);
   return code;
 }
 
-async function cleanupTenantOf(clerkUserId: string) {
-  const t = await prisma.tenant.findUnique({ where: { ownerClerkUserId: clerkUserId }, select: { id: true, venues: { select: { id: true } } } });
+async function cleanupTenantOf(userId: string) {
+  const t = await prisma.tenant.findUnique({ where: { ownerUserId: userId }, select: { id: true, venues: { select: { id: true } } } });
   if (!t) return;
   for (const v of t.venues) {
     await prisma.slotRule.deleteMany({ where: { venueId: v.id } });
@@ -75,14 +91,14 @@ async function main() {
   check(venueCodeFrom('Turfly') !== 'TFLY' || true, 'TFLY is never reused'); // guarded in impl
 
   // --- happy path ---
-  const owner1 = `user_${PREFIX}owner1`;
-  madeUsers.push(owner1);
+  const owner1User = await makeUser('owner1');
+  const owner1 = owner1User.id;
   {
     const code = await issueAndClaim(owner1);
     const r = await provisionTenant(prisma, {
-      clerkUserId: owner1,
-      ownerName: 'Test Owner',
-      ownerEmail: `${PREFIX}owner1@example.invalid`,
+      ownerUserId: owner1,
+      ownerName: owner1User.name,
+      ownerEmail: owner1User.email,
       businessName: 'Test Business One',
       venueName: 'Verify Turf',
       slug: `${PREFIX}one`,
@@ -94,12 +110,12 @@ async function main() {
 
     const [rules, user, codeRow, venue] = await Promise.all([
       prisma.slotRule.count({ where: { venueId: r.venueId } }),
-      prisma.user.findUnique({ where: { clerkUserId: owner1 } }),
+      prisma.user.findUnique({ where: { id: owner1 } }),
       prisma.registrationCode.findUnique({ where: { code } }),
       prisma.venue.findUnique({ where: { id: r.venueId } }),
     ]);
     check(rules === SLOT_RULES_PER_VENUE, `exactly ${SLOT_RULES_PER_VENUE} slot rules seeded (got ${rules})`);
-    check(user?.invitedEmail === `${PREFIX}owner1@example.invalid`, 'owner User row created and bound');
+    check(user?.email === owner1User.email, 'owner User row is the provisioning actor');
     check(codeRow?.tenantId === r.tenantId, 'the registration code is bound to the tenant it produced');
     check(venue?.code === 'VERI', 'venue code derived from the turf name');
     check(venue?.depositPercent === 30, 'venue starts with the default deposit percentage');
@@ -110,11 +126,12 @@ async function main() {
 
   // --- idempotency: same owner again ---
   {
-    const code = await issueAndClaim(`${owner1}-second`);
+    const secondUser = await makeUser('owner1b');
+    const code = await issueAndClaim(secondUser.id);
     const again = await provisionTenant(prisma, {
-      clerkUserId: owner1,
-      ownerName: 'Test Owner',
-      ownerEmail: `${PREFIX}owner1@example.invalid`,
+      ownerUserId: owner1,
+      ownerName: owner1User.name,
+      ownerEmail: owner1User.email,
       businessName: 'Should Not Be Created',
       venueName: 'Should Not Exist',
       slug: `${PREFIX}duplicate`,
@@ -128,16 +145,16 @@ async function main() {
   }
 
   // --- slug collision surfaces as a unique violation ---
-  const owner2 = `user_${PREFIX}owner2`;
-  madeUsers.push(owner2);
+  const owner2User = await makeUser('owner2');
+  const owner2 = owner2User.id;
   {
     const code = await issueAndClaim(owner2);
     let collided = false;
     try {
       await provisionTenant(prisma, {
-        clerkUserId: owner2,
-        ownerName: 'Second Owner',
-        ownerEmail: `${PREFIX}owner2@example.invalid`,
+        ownerUserId: owner2,
+        ownerName: owner2User.name,
+        ownerEmail: owner2User.email,
         businessName: 'Test Business Two',
         venueName: 'Another Turf',
         slug: `${PREFIX}one`, // taken above
@@ -149,7 +166,7 @@ async function main() {
       collided = (err as { code?: string }).code === 'P2002';
     }
     check(collided, 'a taken slug fails rather than silently reusing a venue');
-    const orphan = await prisma.tenant.findUnique({ where: { ownerClerkUserId: owner2 } });
+    const orphan = await prisma.tenant.findUnique({ where: { ownerUserId: owner2 } });
     check(orphan === null, 'the failed transaction left NO partial tenant behind');
   }
 

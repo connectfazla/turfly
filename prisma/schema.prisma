@@ -100,42 +100,39 @@ enum PaymentClaimStatus {
 /// AuditLog.actorId). Customers are NEVER Users — they do not authenticate
 /// as staff.
 ///
-/// Authentication itself lives in Clerk; this row is the local identity
-/// that Clerk account binds to, via clerkUserId. Keeping it (rather than
-/// storing bare Clerk ids on every FK) is what lets an audit entry or an
-/// old booking still render "who did this" after the Clerk account is
-/// deleted — see the Clerk-cutover plan's Decision 1.
+/// Authentication is in-house: a bcrypt password hash, a verified email, and
+/// a server-side Session row. Deliberately NOT a third-party identity
+/// provider — staff auth here is a handful of people per venue, and the
+/// verification/reset flows are the only parts worth outsourcing, which is a
+/// trade this project decided against.
 model User {
   id String @id @default(cuid())
 
-  /// The bound Clerk account. Null means "invited but has never signed in
-  /// yet" (VenueStaff grant exists, the person hasn't accepted) or, for
-  /// the legacy pre-Clerk rows, "not yet rebound to a real Clerk user".
-  clerkUserId String? @unique
-  email       String  @unique
-  name        String
+  email String @unique
+  name  String
 
-  /// SECURITY: the ONLY address allowed to bind a Clerk account to this
-  /// row on first sign-in, and only when Clerk reports that address
-  /// verified. Deliberately separate from `email` (which an owner can
-  /// edit for display) so editing a display address can never widen who
-  /// is allowed to claim the row. See lib/auth/require-role.ts's
-  /// resolveStaffUser().
-  invitedEmail String?
-
-  /// LEGACY (Auth.js credentials login). Nullable as of the Clerk cutover
-  /// — new rows never get one — and dropped entirely in a later migration
-  /// once no code reads it.
+  /// bcrypt. Null means "invited but has not set a password yet" — the row
+  /// and its VenueStaff grant exist, and the invite token is what lets them
+  /// choose one. A null hash can NEVER authenticate: verifyPassword refuses
+  /// before comparing, so an invited-but-inactive account is not a login
+  /// with an empty password.
   passwordHash String?
-  /// LEGACY (ADMIN | MODERATOR). Superseded by the derived OWNER /
-  /// MANAGER / BOOKIE model: ownership comes from Tenant.ownerClerkUserId
-  /// and staff roles from VenueStaff. Dropped in a later migration.
-  role Role @default(MODERATOR)
+
+  /// Set the moment the address is proven (invite accepted, or verification
+  /// link followed). Sign-in refuses while this is null — otherwise anyone
+  /// could sign up claiming a staff member's address and inherit their
+  /// grants. This is the check that replaces Clerk's `verification.status`.
+  emailVerifiedAt DateTime?
 
   isActive    Boolean   @default(true)
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  sessions      Session[]
+  tokens        VerificationToken[]
+  tenantOwned   Tenant?             @relation("TenantOwner")
+  platformAdmin PlatformAdmin?      @relation("PlatformAdminUser")
 
   bookingsCreated Booking[]    @relation("BookingCreatedBy")
   paymentsTaken   Payment[]    @relation("PaymentReceivedBy")
@@ -143,30 +140,27 @@ model User {
   auditEntries    AuditLog[]
   venueGrants     VenueStaff[]
 
-  @@index([role, isActive])
-  @@index([invitedEmail])
+  @@index([isActive])
 }
 
 // ---------------------------------------------------------------- tenancy
 
-/// One Clerk Organization = one Tenant = one Turf Owner's business account.
-/// clerkOrgId is nullable ONLY for "Tenant Zero" (see the bottom-of-file
-/// backfill note) — every tenant created through the real owner-onboarding
-/// flow always has one. plan/status are unused today (no billing yet) —
-/// present so a future billing layer doesn't need a schema migration to
-/// add them, per the SaaS architecture plan's explicit non-goal.
+/// One Tenant = one Turf Owner's business account. plan/status are unused
+/// today (no billing yet) — present so a future billing layer doesn't need a
+/// schema migration to add them, per the architecture plan's explicit
+/// non-goal.
 model Tenant {
-  id         String  @id @default(cuid())
-  clerkOrgId String? @unique
-  name       String
+  id   String @id @default(cuid())
+  name String
 
   /// UNIQUE: one business per owner, enforced by the database rather than by
   /// onboarding remembering to check. Onboarding does check (and returns the
   /// existing tenant instead of erroring), but a double-submitted form is a
   /// race that check cannot win on its own. Nullable because Tenant Zero
-  /// predates Clerk and has no owner until the operator is bound.
-  ownerClerkUserId String? @unique
-  ownerEmail       String?
+  /// predates the onboarding flow.
+  ownerUserId String? @unique
+  owner       User?   @relation("TenantOwner", fields: [ownerUserId], references: [id])
+  ownerEmail  String?
   plan             String   @default("free")
   status           String   @default("active")
   createdAt        DateTime @default(now())
@@ -174,7 +168,7 @@ model Tenant {
 
   venues Venue[]
 
-  @@index([clerkOrgId])
+  @@index([ownerUserId])
 }
 
 /// A single physical turf. One Tenant can own several (multi-venue
@@ -234,9 +228,9 @@ model Venue {
 /// Points at User.id, NOT at a bare Clerk id: User is the single "one row
 /// per human" record every other FK in the schema already references, so
 /// keying grants the same way is what lets a grant and a booking that
-/// person created resolve to the same identity. A grant can exist before
-/// the person has ever signed in (User.clerkUserId still null) — that is
-/// exactly the pending-invitation state.
+/// person created resolve to the same identity. A grant can exist before the
+/// person has ever signed in (User.passwordHash still null) — that is exactly
+/// the pending-invitation state.
 model VenueStaff {
   id       String @id @default(cuid())
   venueId  String
@@ -265,10 +259,9 @@ model VenueStaff {
 /// redeploy (same "DB value, not baked into source" reasoning as
 /// Venue.bkashNumber).
 model PlatformAdmin {
-  clerkUserId String   @id
-  name        String?
-  email       String?
-  createdAt   DateTime @default(now())
+  userId    String   @id
+  user      User     @relation("PlatformAdminUser", fields: [userId], references: [id])
+  createdAt DateTime @default(now())
 }
 
 // ---------------------------------------------------------------- public
@@ -285,12 +278,6 @@ model Customer {
   /// Same nullability story as email above.
   address       String?
   teamName      String?
-  /// Optional Clerk account link — Customer stays global (not venue- or
-  /// tenant-scoped), deliberately, because the "my bookings" view the
-  /// SaaS product wants must span every venue a customer has booked at,
-  /// not just one. Nullable: booking with just a phone number, no
-  /// account, keeps working exactly as before.
-  clerkUserId   String?  @unique
   totalBookings Int      @default(0)
   totalNoShows  Int      @default(0)
   isBlocked     Boolean  @default(false)
@@ -494,6 +481,64 @@ model VenueReferenceCounter {
   @@id([venueId, year])
 }
 
+// ---------------------------------------------------------------- auth
+
+/// A signed-in staff session. Server-side rather than a self-contained JWT,
+/// deliberately: an owner deactivating a staff member has to take effect NOW,
+/// and a stateless token cannot be revoked before it expires. Every request
+/// reads this row anyway to resolve the venue, so the lookup costs nothing
+/// extra.
+///
+/// The `id` is a SHA-256 hash of the token in the cookie, never the token
+/// itself — a leaked database backup then contains no usable session
+/// credentials.
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  /// Diagnostics only, for an owner reviewing where their account is signed
+  /// in. Never used to make an authorization decision — both are trivially
+  /// spoofable.
+  userAgent String?
+  ip        String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+enum VerificationTokenType {
+  /// Set your first password after being invited to a venue.
+  INVITE
+  /// Prove you own the address you signed up with.
+  EMAIL_VERIFY
+  /// Forgotten-password reset.
+  PASSWORD_RESET
+}
+
+/// Single-use, expiring tokens for the three email-driven flows.
+///
+/// Same hashing rule as Session: `id` is the SHA-256 of the token that went
+/// out in the email. Anyone reading the database cannot mint a working reset
+/// link from it.
+///
+/// `usedAt` rather than deletion so a second click on the same link can say
+/// "this link was already used" instead of the indistinguishable "invalid
+/// link" — and so replay is visible rather than silent.
+model VerificationToken {
+  id        String                @id
+  userId    String
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      VerificationTokenType
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime              @default(now())
+
+  @@index([userId, type])
+  @@index([expiresAt])
+}
+
 // ------------------------------------------------------- registration codes
 
 /// A one-time invitation to register a turf business. Nobody can create a
@@ -506,7 +551,7 @@ model VenueReferenceCounter {
 ///   completed = tenantId set. Onboarding finished and produced a business.
 ///
 /// Splitting them means a crash midway through provisioning doesn't burn the
-/// code: the same person returns, and because redeemedByClerkUserId is theirs
+/// code: the same person returns, and because redeemedByUserId is theirs
 /// and tenantId is still null, they resume rather than being told their code
 /// is already used. A single `isUsed` boolean would strand them, and the only
 /// remedy would be the operator manually issuing a replacement.
@@ -529,13 +574,13 @@ model RegistrationCode {
   label         String?
   issuedToEmail String?
 
-  createdByClerkUserId String
+  createdByUserId String
   expiresAt            DateTime?
   revokedAt            DateTime?
 
   /// Phase 1 — see the two-phase note above.
   redeemedAt            DateTime?
-  redeemedByClerkUserId String?
+  redeemedByUserId String?
 
   /// Phase 2. Unique: one code can only ever produce one business, so a
   /// duplicate write is rejected by the database rather than by a check
@@ -544,8 +589,8 @@ model RegistrationCode {
 
   createdAt DateTime @default(now())
 
-  @@index([createdByClerkUserId])
-  @@index([redeemedByClerkUserId])
+  @@index([createdByUserId])
+  @@index([redeemedByUserId])
 }
 
 // ---------------------------------------------------------------- audit

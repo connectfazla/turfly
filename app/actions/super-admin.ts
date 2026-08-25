@@ -51,7 +51,7 @@ export async function issueRegistrationCodeAction(
           display,
           label: parsed.label || null,
           issuedToEmail: parsed.issuedToEmail || null,
-          createdByClerkUserId: admin.clerkUserId,
+          createdByUserId: admin.userId,
           expiresAt,
         },
       });
