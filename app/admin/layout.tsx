@@ -1,9 +1,10 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { Geist } from 'next/font/google';
 import { LogOut } from 'lucide-react';
 import { getVenueName } from '@/lib/venue';
 import { requireRole } from '@/lib/auth/require-role';
-import { VenueNotSelectedError } from '@/lib/auth/active-venue';
+import { VenueNotSelectedError, accessibleVenueIds } from '@/lib/auth/active-venue';
 import { signOutAction } from '@/app/actions/auth';
 import { SidebarNav } from '@/components/admin/sidebar-nav';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -79,17 +80,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   try {
     staff = await requireRole();
   } catch (err) {
-    // "Which venue?" is a different situation from "you have no access", and
+    // "Which venue?" is a different situation from "you have no access" -
     // telling a multi-venue owner they aren't staff would be simply wrong.
-    // /admin has no venue picker yet, so this names the state honestly rather
-    // than guessing a venue and mutating the wrong one's data.
+    // Send them to pick one rather than guessing and mutating the wrong
+    // venue's data. redirect() throws internally, so nothing below this
+    // runs for this case.
     if (err instanceof VenueNotSelectedError) {
-      return (
-        <Dead
-          title="Choose a venue"
-          body="This account has access to more than one venue, and this page cannot tell which one you mean yet."
-        />
-      );
+      redirect('/select-venue');
     }
     // Fails closed: anything else requireRole refuses - not signed in, no
     // grant, deactivated, venue inactive - lands here rather than rendering a
@@ -110,6 +107,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // (which banner to show), never an authorization input. See lib/demo.ts's
   // header comment on why nothing security-relevant is keyed off it here.
   const tenant = await prisma.tenant.findUnique({ where: { id: staff.tenantId }, select: { isDemo: true } });
+  // Also display-only: whether to show a "Switch venue" link at all. Only
+  // {id: staff.id} is needed (see active-venue.ts's Identifiable), so this
+  // doesn't cost a second session/cookie lookup on top of requireRole()'s.
+  const hasMultipleVenues = (await accessibleVenueIds({ id: staff.id })).length > 1;
 
   return (
     <div data-dashboard-theme className={`flex min-h-dvh ${geist.variable}`}>
@@ -128,12 +129,22 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <div className="bg-accent text-caption flex size-7 shrink-0 items-center justify-center rounded-lg font-semibold text-white">
             {venueName.slice(0, 1).toUpperCase()}
           </div>
-          <Link
-            href="/admin"
-            className="text-subheading text-text truncate font-semibold tracking-tight"
-          >
-            {venueName}
-          </Link>
+          <div className="min-w-0">
+            <Link
+              href="/admin"
+              className="text-subheading text-text block truncate font-semibold tracking-tight"
+            >
+              {venueName}
+            </Link>
+            {hasMultipleVenues ? (
+              <Link
+                href="/select-venue"
+                className="text-caption text-text-muted hover:text-text underline decoration-dotted underline-offset-2"
+              >
+                Switch venue
+              </Link>
+            ) : null}
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto px-3 pb-3">
           <SidebarNav role={staff.role} vertical />
@@ -166,6 +177,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               {venueName}
             </Link>
             <div className="text-caption text-text-muted flex items-center gap-3">
+              {hasMultipleVenues ? (
+                <Link href="/select-venue" className="hover:text-text underline decoration-dotted underline-offset-2">
+                  Switch venue
+                </Link>
+              ) : null}
               <span>{roleLabel(staff.role)}</span>
               <SignOutButton />
             </div>

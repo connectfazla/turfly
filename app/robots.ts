@@ -25,6 +25,7 @@ export default function robots(): MetadataRoute.Robots {
           '/reset-password',
           '/accept-invite',
           '/onboarding',
+          '/select-venue',
           '/demo',
           '/api/',
           '/book/confirm',

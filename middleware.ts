@@ -16,7 +16,7 @@ import { SESSION_COOKIE } from '@/lib/auth/constants';
  * the ordinary signed-out visitor. If it ever missed a route, the page would
  * still refuse — just less gracefully.
  */
-const PROTECTED_PREFIXES = ['/admin', '/dashboard', '/super-admin', '/onboarding'];
+const PROTECTED_PREFIXES = ['/admin', '/dashboard', '/super-admin', '/onboarding', '/select-venue'];
 
 export default function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

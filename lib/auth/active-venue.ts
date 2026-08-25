@@ -26,11 +26,18 @@ import { prisma } from '@/lib/prisma';
 import { DEFAULT_VENUE_SLUG } from '@/lib/tenant';
 import { ForbiddenError } from './require-role';
 
+/** Only `.id` is read. Narrowed from the full Prisma `User` so callers that
+ * only hold a `StaffUser` (e.g. app/admin/layout.tsx, which already paid for
+ * the session lookup inside requireRole()) can call this without a second
+ * getSessionUser() round trip just to satisfy the type. */
+type Identifiable = Pick<User, 'id'>;
+
 export const ACTIVE_VENUE_COOKIE = 'turfly_venue';
 
-/** Thrown when a staff member has several venues and nothing said which. The
- * UI turns this into a venue picker rather than guessing — guessing here
- * would mean silently mutating the wrong venue's data. */
+/** Thrown when a staff member has several venues and nothing said which.
+ * app/admin/layout.tsx catches this and redirects to /select-venue rather
+ * than guessing — guessing here would mean silently mutating the wrong
+ * venue's data. */
 export class VenueNotSelectedError extends Error {
   constructor(message = 'Choose which venue you are working on.') {
     super(message);
@@ -47,7 +54,7 @@ export class VenueNotSelectedError extends Error {
  * own staff, which is what makes Super Admin's deactivate switch actually
  * mean something.
  */
-export async function accessibleVenueIds(user: User): Promise<string[]> {
+export async function accessibleVenueIds(user: Identifiable): Promise<string[]> {
   const isPlatformAdmin = await prisma.platformAdmin.findUnique({
     where: { userId: user.id },
     select: { userId: true },
@@ -74,7 +81,7 @@ export async function accessibleVenueIds(user: User): Promise<string[]> {
  * it; throws otherwise. Every path in this module funnels through here —
  * do not add one that doesn't.
  */
-export async function assertVenueAccess(user: User, venueId: string): Promise<string> {
+export async function assertVenueAccess(user: Identifiable, venueId: string): Promise<string> {
   const allowed = await accessibleVenueIds(user);
   if (!allowed.includes(venueId)) throw new ForbiddenError();
   return venueId;
