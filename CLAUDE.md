@@ -22,7 +22,7 @@ into the numbered sections written for the single-venue app.
 A single Next.js app with two surfaces over one database:
 
 - **Public booking page** — no login. Visitor picks a date, picks a 90-minute slot, submits contact details, gets a booking reference.
-- **Admin panel** — `/admin/*`, Clerk sign-in required. Roles are venue-scoped `OWNER | MANAGER | BOOKIE` — see §11.
+- **Admin panel** — `/admin/*`, sign-in required. Roles are venue-scoped `OWNER | MANAGER | BOOKIE` — see §11.
 - **Platform panel** — `/super-admin/*`, for the platform operator only. Issues the registration codes without which nobody can register a business.
 
 One football field, one venue, open 24 hours, as of the original university project. §11 covers what multi-venue changes.
@@ -71,7 +71,7 @@ asserts both.
 | Framework | Next.js 15, App Router, TypeScript strict |
 | UI | React 19, Tailwind CSS v4, shadcn/ui (Radix) |
 | DB | PostgreSQL 16 + Prisma 6 |
-| Auth | Clerk (`@clerk/nextjs`) for everyone — staff, owners, operator, optional customer accounts. Auth.js is GONE. |
+| Auth | **In-house.** bcrypt + server-side `Session` rows + `VerificationToken` for invite/verify/reset. No third-party identity provider. See `SECURITY.md`. |
 | Validation | Zod — one schema shared by client form and server action |
 | Forms | React Hook Form |
 | Dates | date-fns + date-fns-tz |
@@ -173,16 +173,26 @@ booking flow.
 
 ```
 Public    /  /book  /book/[date]  /book/confirm  /book/success/[ref]
-          /booking/lookup  /rules  /sign-in  /sign-up
+          /booking/lookup  /rules
+Auth      /sign-in  /sign-up  /verify-email  /forgot-password
+          /reset-password  /accept-invite
 Staff     /admin  /admin/calendar  /admin/bookings
           /admin/bookings/[id]  /admin/bookings/new
           /admin/blackouts  /admin/customers
-Owner     /admin/pricing  /admin/reports  /admin/audit
+Owner     /admin/pricing  /admin/staff
+Owner+Mgr /admin/reports  /admin/audit  /admin/customers
 Operator  /super-admin  /super-admin/codes  /super-admin/tenants
 ```
 
-`/login` is a redirect stub to `/sign-in`, kept for old bookmarks. `/admin/users` is
-gone — it was password-based; venue-scoped Clerk invitations replace it.
+Every venue is also served at `{slug}.turfly.app` — the same public pages,
+resolved by host via `lib/request-venue.ts`. The bare domain serves the
+marketing site and Venue Zero's booking pages.
+
+`scripts/verify-role-matrix.ts` checks the role table above against the actual
+`requireRole(...)` calls. Run it after touching any guard.
+
+`/login` is a redirect stub to `/sign-in`, kept for old bookmarks.
+`/admin/users` is gone; `/admin/staff` replaces it with venue-scoped invitations.
 
 Middleware ONLY checks that somebody is signed in. It does no role check and reads no
 database — a role now comes from `Tenant`/`VenueStaff`/`PlatformAdmin` rows, which is
@@ -233,16 +243,14 @@ protect a Server Action.
 **Status:** Stages 1-4 and 6 shipped. Full plan, reasoning, and remaining stages:
 `~/.claude/plans/sprightly-wobbling-kahn.md` — read it before starting a new stage.
 
-**THE CENTRAL RULE: our database is the authorization source of truth; Clerk is
-authentication only.** `requireRole()` never reads Clerk's `orgId`/`orgRole` — it reads
-`Tenant.ownerClerkUserId`, `VenueStaff`, and `PlatformAdmin`. This is deliberate: a
-lagging webhook, a failed organization creation, or an unset active org can never lock
-an owner out of their own dashboard. Clerk Organizations matter only for hosted staff
-invitations (Stage 8), which is why everything below works with Organizations not even
-enabled on the instance.
+**Authentication and authorization are both ours.** There is no identity provider.
+`requireRole()` resolves a session (`lib/auth/session.ts`), then reads
+`Tenant.ownerUserId`, `VenueStaff` and `PlatformAdmin` — all keyed on `User.id`, the one
+identity every other FK in the schema already points at. `SECURITY.md` documents what
+this protects and, just as importantly, what it does not.
 
 **Roles.** `OWNER | MANAGER | BOOKIE`, scoped to one venue.
-- **OWNER** is *derived, never stored* — from `Tenant.ownerClerkUserId`, or a
+- **OWNER** is *derived, never stored* — from `Tenant.ownerUserId`, or a
   `PlatformAdmin` row. That is why `VenueStaffRole` has only MANAGER and BOOKIE.
 - **MANAGER** — money and reports, no pricing or staff management.
 - **BOOKIE** — bookings and check-in only. Genuinely excluded from money:
@@ -252,16 +260,11 @@ enabled on the instance.
   rather than an env var so it is grantable without a redeploy.
 
 **Staff identity.** `User` = one row per human, the FK anchor for
-`Booking.createdById` / `AuditLog.actorId` / etc., bound to a Clerk account via
-`clerkUserId`. `VenueStaff` = a grant, pointing at `User.id`. Keeping the local row is
-what lets an old audit entry still render "who did this" after a Clerk account is
-deleted.
-
-**Binding is security-critical** (`resolveStaffUser()` in `lib/auth/require-role.ts`).
-A Clerk account binds to a `User` row ONLY when Clerk reports the email **verified**,
-it matches `User.invitedEmail` (NOT `User.email`, which is editable for display), and
-the row is unbound — claimed via `updateMany` so two concurrent first sign-ins cannot
-both take it. Do not relax any of the three.
+`Booking.createdById` / `AuditLog.actorId` / etc. `VenueStaff` = a grant pointing at
+`User.id`. An invited-but-not-accepted staff member has a row and a grant but a NULL
+`passwordHash`, and **a null hash can never authenticate** — `verifyPassword` refuses
+before comparing. Do not add a code path that treats "no hash" as "no password
+required".
 
 **Active venue** (`lib/auth/active-venue.ts`): explicit param > cookie > sole venue.
 None of them are trusted — every one is re-derived against real grants before use.
@@ -282,15 +285,19 @@ two genuinely concurrent redemptions).
 ```
 pnpm exec tsx scripts/verify-tenant-isolation.ts
 pnpm exec tsx scripts/verify-registration-codes.ts
+pnpm exec tsx scripts/verify-onboarding.ts
+pnpm exec tsx scripts/verify-role-matrix.ts           # the "staff can't see money" promise
 pnpm exec tsx scripts/create-test-venue.ts            # second tenant, for isolation tests
 pnpm exec playwright test e2e/concurrency.spec.ts     # both halves of the index guarantee
 ```
 
-**Not done yet:** subdomain routing (`{slug}.turfly.tld`), owner onboarding /
-provisioning (Stage 7), staff invitations + `/dashboard/[venueId]` (Stage 8), dropping
-the legacy `User.passwordHash` / `User.role` columns (Stage 9). Clerk **Organizations
-is not yet enabled** on the instance — needed only for Stage 8, and must be enabled
-with membership mode `optional`, since customers must be able to exist with no org.
+First platform admin on a fresh database: sign up at `/sign-up`, then
+`pnpm exec tsx scripts/grant-platform-admin.ts you@example.com`.
+
+**Not done yet:** `/dashboard/[venueId]` (a multi-venue owner currently has no venue
+picker — `/admin` shows "Choose a venue" and stops); per-venue email branding; the
+wildcard DNS record and Vercel wildcard domain that subdomain routing needs in
+production (README documents both).
 
 **Explicit non-goals:** platform billing/Stripe, a real payment gateway, real-time push
 notifications, multi-region beyond `Asia/Dhaka`.

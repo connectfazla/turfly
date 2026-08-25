@@ -3,6 +3,7 @@ import { Geist } from 'next/font/google';
 import { LogOut } from 'lucide-react';
 import { getVenueName } from '@/lib/venue';
 import { requireRole } from '@/lib/auth/require-role';
+import { VenueNotSelectedError } from '@/lib/auth/active-venue';
 import { signOutAction } from '@/app/actions/auth';
 import { SidebarNav } from '@/components/admin/sidebar-nav';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -34,19 +35,16 @@ function roleLabel(role: 'OWNER' | 'MANAGER' | 'BOOKIE'): string {
  * routine outcome, not an error: anyone with an account can reach /admin by
  * typing it. A stack trace would be both alarming and useless to them, so
  * this is a plain dead end with a way back. */
-function NoAccess() {
+function Dead({ title, body }: { title: string; body: string }) {
   return (
-    <div className="bg-surface flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center">
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-surface px-4 text-center">
       <div>
-        <h1 className="text-heading text-text">Staff access only</h1>
-        <p className="text-body text-text-muted mt-1 max-w-sm">
-          You&apos;re signed in, but this account isn&apos;t staff at this venue. If that seems
-          wrong, ask the venue owner to invite you.
-        </p>
+        <h1 className="text-heading text-text">{title}</h1>
+        <p className="mt-1 max-w-sm text-body text-text-muted">{body}</p>
       </div>
       <Link
         href="/"
-        className="bg-accent text-body hover:bg-accent/90 rounded-(--radius-input) px-4 py-2 text-white transition-colors"
+        className="rounded-(--radius-input) bg-accent px-4 py-2 text-body text-white transition-colors hover:bg-accent/90"
       >
         Back to booking
       </Link>
@@ -78,11 +76,28 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   let staff: Awaited<ReturnType<typeof requireRole>>;
   try {
     staff = await requireRole();
-  } catch {
-    // Fails closed: anything requireRole refuses - not signed in, no
-    // grant, deactivated, venue inactive - lands here rather than
-    // rendering a single child page.
-    return <NoAccess />;
+  } catch (err) {
+    // "Which venue?" is a different situation from "you have no access", and
+    // telling a multi-venue owner they aren't staff would be simply wrong.
+    // /admin has no venue picker yet, so this names the state honestly rather
+    // than guessing a venue and mutating the wrong one's data.
+    if (err instanceof VenueNotSelectedError) {
+      return (
+        <Dead
+          title="Choose a venue"
+          body="This account has access to more than one venue, and this page cannot tell which one you mean yet."
+        />
+      );
+    }
+    // Fails closed: anything else requireRole refuses - not signed in, no
+    // grant, deactivated, venue inactive - lands here rather than rendering a
+    // single child page.
+    return (
+      <Dead
+        title="Staff access only"
+        body="You're signed in, but this account isn't staff at this venue. If that seems wrong, ask the venue owner to invite you."
+      />
+    );
   }
   // staff.venueId, NOT the request host. The dashboard is reached at
   // turfly.app/admin regardless of which venue you work at, so resolving the

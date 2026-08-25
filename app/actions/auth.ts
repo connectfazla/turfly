@@ -18,7 +18,7 @@ import { prisma } from '@/lib/prisma';
 import { clientIpFromHeaders, isRateLimited } from '@/lib/auth/rate-limit';
 import { fakeVerify, hashPassword, verifyPassword, MIN_PASSWORD_LENGTH } from '@/lib/auth/password';
 import { consumeToken, issueToken, pruneExpiredTokens } from '@/lib/auth/tokens';
-import { createSession, destroyAllSessions, destroySession } from '@/lib/auth/session';
+import { createSession, destroyAllSessions, destroySession, pruneExpiredSessions } from '@/lib/auth/session';
 import { sendAuthEmail } from '@/lib/notifications/auth-email';
 
 type ActionResult<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
@@ -68,6 +68,9 @@ export async function signInAction(input: z.input<typeof signInSchema>): Promise
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
   await createSession(user.id);
+  // Opportunistic housekeeping, not awaited — a slow cleanup must never make
+  // signing in feel slow.
+  void pruneExpiredSessions();
   return { ok: true };
 }
 

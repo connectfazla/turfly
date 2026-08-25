@@ -93,6 +93,25 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   return { user: session.user, sessionId: id };
 }
 
+/**
+ * Deletes sessions that expired a while ago.
+ *
+ * getSessionUser() already removes an expired row when it happens to read
+ * one, but a session nobody ever returns to is never read again — without
+ * this, abandoned rows accumulate forever. Called opportunistically, the same
+ * way lib/auth/rate-limit.ts prunes its buckets, so it costs nothing on the
+ * hot path.
+ */
+export async function pruneExpiredSessions(): Promise<void> {
+  try {
+    await prisma.session.deleteMany({
+      where: { expiresAt: { lt: new Date(Date.now() - 7 * 24 * 60 * 60_000) } },
+    });
+  } catch (err) {
+    console.error('[session] prune failed:', err);
+  }
+}
+
 /** Ends the current session and clears the cookie. */
 export async function destroySession(): Promise<void> {
   const jar = await cookies();
