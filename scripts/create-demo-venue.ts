@@ -445,7 +445,7 @@ async function main() {
     `\nDemo ready.\n` +
       `  Dashboard:  /demo  (pick Owner / Manager / Bookie — no password)\n` +
       `  Public site: http://demo.lvh.me:3000/book   (local)\n` +
-      `               https://demo.turfly.app/book   (once the wildcard domain is live)\n` +
+      `               https://demo.turfly.xyz/book   (once the wildcard domain is live)\n` +
       `\nRe-run with --reset before a live walkthrough to start from a clean state.`,
   );
 }

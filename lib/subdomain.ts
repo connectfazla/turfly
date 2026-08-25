@@ -1,7 +1,7 @@
 /**
  * Resolving a venue from the request host.
  *
- * Each venue is reachable at `{slug}.turfly.app`. The public booking pages
+ * Each venue is reachable at `{slug}.turfly.xyz`. The public booking pages
  * keep their ordinary paths (`/book`, `/rules`) — only the host distinguishes
  * one venue from another, which is why this is a pure string function tested
  * on its own rather than something tangled into middleware.
@@ -29,7 +29,7 @@ export interface HostResolution {
 }
 
 /**
- * @param host the raw `host` header, e.g. "dhanmondi.turfly.app" or
+ * @param host the raw `host` header, e.g. "dhanmondi.turfly.xyz" or
  *   "dhanmondi.lvh.me:3000".
  * @param rootDomain the deployment's own domain, from NEXT_PUBLIC_ROOT_DOMAIN.
  */
@@ -55,7 +55,7 @@ export function resolveHost(host: string | null, rootDomain: string): HostResolu
   }
 
   const label = hostname.slice(0, -(root.length + 1));
-  // Only a single label is a venue. `a.b.turfly.app` is not `a` — refusing it
+  // Only a single label is a venue. `a.b.turfly.xyz` is not `a` — refusing it
   // means a nested wildcard certificate mistake cannot become a routing
   // surprise.
   if (label.includes('.')) return { venueSlug: null, isLocal };

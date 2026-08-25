@@ -125,14 +125,14 @@ export function OnboardingForm() {
             className="w-40 rounded-(--radius-input) font-mono"
             {...form.register('slug', { onChange: () => setSlugTouched(true) })}
           />
-          <span className="text-body text-text-muted">.turfly.app</span>
+          <span className="text-body text-text-muted">.turfly.xyz</span>
         </div>
         {form.formState.errors.slug ? (
           <p className="text-caption text-danger">{form.formState.errors.slug.message}</p>
         ) : (
           <p className="text-caption text-text-muted">
             Players will book at{' '}
-            <span className="font-mono text-text">{slug || 'your-turf'}.turfly.app</span>. Choose carefully — this
+            <span className="font-mono text-text">{slug || 'your-turf'}.turfly.xyz</span>. Choose carefully — this
             ends up on your posters.
           </p>
         )}

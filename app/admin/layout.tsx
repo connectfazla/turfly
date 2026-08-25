@@ -99,7 +99,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     );
   }
   // staff.venueId, NOT the request host. The dashboard is reached at
-  // turfly.app/admin regardless of which venue you work at, so resolving the
+  // turfly.xyz/admin regardless of which venue you work at, so resolving the
   // name from the host would show every staff member "Turfly" (Venue Zero)
   // instead of their own turf.
   const venueName = await getVenueName(staff.venueId);

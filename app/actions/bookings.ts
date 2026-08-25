@@ -83,7 +83,7 @@ export interface HoldSlotResult {
  * many-IP/many-phone-number abuse (see README §15). */
 export async function holdSlotAction(input: HoldSlotFormInput): Promise<ActionResult<HoldSlotResult>> {
   try {
-    // Resolved from the request host: dhanmondi.turfly.app books Dhanmondi's
+    // Resolved from the request host: dhanmondi.turfly.xyz books Dhanmondi's
     // pitch, the bare domain still books Venue Zero. This is the line that
     // makes one set of booking pages serve every tenant.
     const venueId = await getRequestVenueId();

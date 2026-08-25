@@ -23,7 +23,7 @@ Production. `.env.example` has the same list with inline notes — keep the two 
 | Variable | Notes |
 |---|---|
 | `DATABASE_URL` | Neon's **direct** connection string — see above |
-| `NEXT_PUBLIC_SITE_URL` | The deployment's own URL, e.g. `https://turfly.app`. Used to build absolute links in auth emails |
+| `NEXT_PUBLIC_SITE_URL` | The deployment's own URL, e.g. `https://turfly.xyz`. Used to build absolute links in auth emails |
 | `NEXT_PUBLIC_ROOT_DOMAIN` | Root domain for venue subdomains — see §4 |
 | `LOOPS_API_KEY` | From loops.so. Without it, auth emails (verify/reset/invite) are logged to the server console instead of sent — fine for Preview, not for Production |
 | `LOOPS_TXN_EMAIL_VERIFY` / `LOOPS_TXN_PASSWORD_RESET` / `LOOPS_TXN_INVITE` / `LOOPS_TXN_DUPLICATE_SIGNUP` | Each a Loops transactionalId — create the four templates in the Loops dashboard first, see `lib/notifications/auth-email.ts` |
@@ -65,9 +65,16 @@ Every venue is reachable at `{slug}.$NEXT_PUBLIC_ROOT_DOMAIN` — see `lib/reque
 after the first deploy without breaking anything (venues stay fully usable at the bare domain
 until then):
 
-1. A wildcard DNS record — `*.turfly.app CNAME cname.vercel-dns.com` (exact target per your
+1. A wildcard DNS record — `*.turfly.xyz CNAME cname.vercel-dns.com` (exact target per your
    registrar) — pointing at Vercel.
-2. `*.turfly.app` added as a domain in the Vercel project (Settings → Domains).
+2. `*.turfly.xyz` added as a domain in the Vercel project (Settings → Domains).
+
+**If DNS is on Cloudflare:** add the `*` CNAME with proxy status set to **DNS only (grey
+cloud)**, not Proxied (orange cloud), on both the wildcard record and the apex `turfly.xyz`
+record. Venue resolution reads the raw `Host` header per request (`lib/subdomain.ts`), and Vercel
+issues/terminates its own TLS cert per domain automatically — a Cloudflare-proxied record
+terminates TLS at Cloudflare's edge instead and breaks both. Also confirm the Vercel plan
+supports wildcard domains before relying on this (historically gated behind a paid plan).
 
 ## 5. Deploy
 

@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://turfly.app';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://turfly.xyz';
 
 /**
  * Only the pages worth indexing: the marketing site and the two evergreen

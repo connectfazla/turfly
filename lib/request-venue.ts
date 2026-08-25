@@ -1,7 +1,7 @@
 /**
  * Resolves WHICH venue a public request is for, from the host.
  *
- * `dhanmondi.turfly.app/book` and `turfly.app/book` are the same page serving
+ * `dhanmondi.turfly.xyz/book` and `turfly.xyz/book` are the same page serving
  * different businesses. Rather than rewriting to a `/v/[slug]/...` route tree
  * and duplicating every booking page under it, the pages stay where they are
  * and ask this. Same result, a fraction of the code, and no risk of the two
@@ -17,7 +17,7 @@ import { prisma } from './prisma';
 import { resolveHost } from './subdomain';
 import { getDefaultVenueId } from './tenant';
 
-const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? 'turfly.app';
+const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? 'turfly.xyz';
 
 export interface RequestVenue {
   id: string;

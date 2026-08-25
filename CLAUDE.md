@@ -184,7 +184,7 @@ Owner+Mgr /admin/reports  /admin/audit  /admin/customers
 Operator  /super-admin  /super-admin/codes  /super-admin/tenants
 ```
 
-Every venue is also served at `{slug}.turfly.app` — the same public pages,
+Every venue is also served at `{slug}.turfly.xyz` — the same public pages,
 resolved by host via `lib/request-venue.ts`. The bare domain serves the
 marketing site and Venue Zero's booking pages.
 

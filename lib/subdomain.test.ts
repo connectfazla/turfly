@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { resolveHost, venueUrl } from './subdomain';
 
-const ROOT = 'turfly.app';
+const ROOT = 'turfly.xyz';
 
 describe('resolveHost', () => {
   it('reads a venue slug from a subdomain', () => {
-    expect(resolveHost('dhanmondi.turfly.app', ROOT).venueSlug).toBe('dhanmondi');
+    expect(resolveHost('dhanmondi.turfly.xyz', ROOT).venueSlug).toBe('dhanmondi');
   });
 
   it('treats the bare domain and www as the platform', () => {
-    expect(resolveHost('turfly.app', ROOT).venueSlug).toBeNull();
-    expect(resolveHost('www.turfly.app', ROOT).venueSlug).toBeNull();
+    expect(resolveHost('turfly.xyz', ROOT).venueSlug).toBeNull();
+    expect(resolveHost('www.turfly.xyz', ROOT).venueSlug).toBeNull();
   });
 
   it('ignores the port', () => {
@@ -29,14 +29,14 @@ describe('resolveHost', () => {
 
   it('never resolves a reserved platform host as a venue', () => {
     for (const h of ['admin', 'api', 'www', 'app', 'cdn']) {
-      expect(resolveHost(`${h}.turfly.app`, ROOT).venueSlug).toBeNull();
+      expect(resolveHost(`${h}.turfly.xyz`, ROOT).venueSlug).toBeNull();
     }
   });
 
   it('refuses a nested label', () => {
-    // a.b.turfly.app must not resolve to "a" — otherwise a wildcard
+    // a.b.turfly.xyz must not resolve to "a" — otherwise a wildcard
     // certificate mistake becomes a routing surprise.
-    expect(resolveHost('a.b.turfly.app', ROOT).venueSlug).toBeNull();
+    expect(resolveHost('a.b.turfly.xyz', ROOT).venueSlug).toBeNull();
   });
 
   it('treats Vercel preview hosts as the platform', () => {
@@ -48,7 +48,7 @@ describe('resolveHost', () => {
   });
 
   it('is case-insensitive and tolerates a trailing dot', () => {
-    expect(resolveHost('Dhanmondi.Turfly.App.', ROOT).venueSlug).toBe('dhanmondi');
+    expect(resolveHost('Dhanmondi.Turfly.Xyz.', ROOT).venueSlug).toBe('dhanmondi');
   });
 
   it('handles a missing host header', () => {
@@ -58,6 +58,6 @@ describe('resolveHost', () => {
 
 describe('venueUrl', () => {
   it('builds the public booking address', () => {
-    expect(venueUrl('dhanmondi', ROOT)).toBe('https://dhanmondi.turfly.app');
+    expect(venueUrl('dhanmondi', ROOT)).toBe('https://dhanmondi.turfly.xyz');
   });
 });

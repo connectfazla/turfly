@@ -1,7 +1,7 @@
 /**
  * Venue slug and venue-code rules.
  *
- * The slug becomes a subdomain (`{slug}.turfly.app`) and the code is folded
+ * The slug becomes a subdomain (`{slug}.turfly.xyz`) and the code is folded
  * into every booking reference (`TRF-{code}-2026-0001`), so both are effectively
  * permanent from the owner's first booking onward — validation here is the last
  * cheap moment to get them right.
@@ -10,7 +10,7 @@
 /**
  * Reserved slugs. Two separate reasons, both real:
  *
- *  - Routing collisions: a venue at `admin.turfly.app` or `api.turfly.app`
+ *  - Routing collisions: a venue at `admin.turfly.xyz` or `api.turfly.xyz`
  *    would shadow a platform surface once subdomain routing ships.
  *  - Impersonation: `mail`, `accounts`, `support`, `billing`, `help`,
  *    `secure`, `login` are the subdomains a phishing page wants. A tenant is

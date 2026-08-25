@@ -21,7 +21,7 @@ import { MarketingFooter } from '@/components/marketing/marketing-footer';
 import { Eyebrow } from '@/components/marketing/eyebrow';
 import { PillButton } from '@/components/marketing/pill-button';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://turfly.app';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://turfly.xyz';
 const TITLE = 'Turfly — turf booking software for Bangladesh';
 const DESCRIPTION =
   'Booking software for turf owners in Bangladesh. Take bookings online and at the counter, verify bKash deposits, control what each staff member can see, and know what every slot earned.';
@@ -363,7 +363,7 @@ export default function HomePage() {
                 <PillButton href="/sign-up" variant="light">
                   Start with your code
                 </PillButton>
-                <PillButton href="mailto:hello@turfly.app?subject=Turfly%20invite%20request" variant="solid">
+                <PillButton href="mailto:hello@turfly.xyz?subject=Turfly%20invite%20request" variant="solid">
                   Request an invite
                 </PillButton>
               </div>

@@ -8,7 +8,7 @@ const inter = Inter({
   display: 'swap',
 });
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://turfly.app';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://turfly.xyz';
 
 /**
  * Site-wide defaults. Individual pages override `title` and `description`;
