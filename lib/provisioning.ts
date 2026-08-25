@@ -11,6 +11,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { ALL_SLOT_INDEXES, MAINTENANCE_SLOT } from './slots';
 import { ALL_DAYS_OF_WEEK, defaultSlotPrice } from './pricing';
+import { randomVenueCode, venueCodeFrom } from './venue-slug';
 
 /** Accepts either the client or a transaction handle, so this can run
  * inside onboarding's single provisioning transaction. */
@@ -93,3 +94,185 @@ export async function ensureDefaultVenue(db: PrismaClient): Promise<string> {
   });
   return venue.id;
 }
+
+// ------------------------------------------------------- tenant provisioning
+
+export interface ProvisionTenantInput {
+  clerkUserId: string;
+  ownerName: string;
+  ownerEmail: string;
+  businessName: string;
+  venueName: string;
+  slug: string;
+  contactPhone: string;
+  contactEmail?: string;
+  rulesText: string;
+  /** The already-claimed registration code. Bound to the new tenant here. */
+  registrationCode: string;
+}
+
+export interface ProvisionedTenant {
+  tenantId: string;
+  venueId: string;
+  venueSlug: string;
+  venueCode: string;
+  /** True when this call found an existing business rather than creating one. */
+  alreadyExisted: boolean;
+}
+
+/**
+ * Creates a business and its first venue in ONE transaction.
+ *
+ * Everything that must be true together is in here: the tenant, the venue,
+ * its 112 slot rules, the owner's local User row (the FK anchor every future
+ * booking and audit entry points at), and binding the registration code to
+ * the tenant it produced. A partial success would leave a business that
+ * cannot be signed into, or a burned code with nothing behind it.
+ *
+ * Clerk Organization creation is deliberately NOT in here — see
+ * ensureClerkOrg() for why.
+ *
+ * Retries on a Venue.code collision. Checking whether a code is free and then
+ * inserting is a race; letting the unique index reject and retrying with a
+ * fresh random code is the version that is actually correct under concurrency.
+ */
+export async function provisionTenant(
+  prisma: PrismaClient,
+  input: ProvisionTenantInput,
+): Promise<ProvisionedTenant> {
+  // Idempotency: a double-submitted form, or an owner returning to
+  // /onboarding after finishing, gets their existing business rather than a
+  // second one. Tenant.ownerClerkUserId is UNIQUE, so this is belt to the
+  // database's braces, not a substitute for it.
+  const existing = await prisma.tenant.findUnique({
+    where: { ownerClerkUserId: input.clerkUserId },
+    select: { id: true, venues: { select: { id: true, slug: true, code: true }, take: 1 } },
+  });
+  if (existing?.venues[0]) {
+    return {
+      tenantId: existing.id,
+      venueId: existing.venues[0].id,
+      venueSlug: existing.venues[0].slug,
+      venueCode: existing.venues[0].code,
+      alreadyExisted: true,
+    };
+  }
+
+  const MAX_CODE_ATTEMPTS = 5;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
+    const venueCode = attempt === 0 ? venueCodeFrom(input.venueName) : randomVenueCode();
+
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const tenant = await tx.tenant.create({
+            data: {
+              name: input.businessName,
+              ownerClerkUserId: input.clerkUserId,
+              ownerEmail: input.ownerEmail,
+            },
+          });
+
+          const venue = await tx.venue.create({
+            data: {
+              tenantId: tenant.id,
+              slug: input.slug,
+              code: venueCode,
+              name: input.venueName,
+              contactPhone: input.contactPhone,
+              contactEmail: input.contactEmail || null,
+              rulesText: input.rulesText,
+            },
+          });
+
+          await seedSlotRulesForVenue(tx, venue.id);
+
+          // The owner's local User row. invitedEmail is set to their verified
+          // Clerk address and clerkUserId is bound immediately — they are
+          // standing right here, already authenticated, so there is nothing
+          // to invite. Every booking they take and every audit entry they
+          // generate points at this row.
+          const user = await tx.user.upsert({
+            where: { email: input.ownerEmail },
+            update: { clerkUserId: input.clerkUserId, name: input.ownerName, isActive: true },
+            create: {
+              clerkUserId: input.clerkUserId,
+              email: input.ownerEmail,
+              invitedEmail: input.ownerEmail,
+              name: input.ownerName,
+              isActive: true,
+            },
+          });
+
+          // Phase 2 of the code's lifecycle. Scoped to this claimant, so a
+          // code held by somebody else cannot be completed here.
+          const bound = await tx.registrationCode.updateMany({
+            where: { code: input.registrationCode, redeemedByClerkUserId: input.clerkUserId, tenantId: null },
+            data: { tenantId: tenant.id },
+          });
+          if (bound.count !== 1) {
+            // Rolls the whole transaction back. Reaching here means the code
+            // was revoked or completed between claiming and provisioning.
+            throw new Error('REGISTRATION_CODE_NO_LONGER_CLAIMABLE');
+          }
+
+          await tx.auditLog.createMany({
+            data: [
+              {
+                actorId: user.id,
+                action: 'TENANT_CREATED',
+                entityType: 'Tenant',
+                entityId: tenant.id,
+                tenantId: tenant.id,
+                after: { name: input.businessName, ownerEmail: input.ownerEmail },
+              },
+              {
+                actorId: user.id,
+                action: 'VENUE_CREATED',
+                entityType: 'Venue',
+                entityId: venue.id,
+                tenantId: tenant.id,
+                venueId: venue.id,
+                after: { name: input.venueName, slug: input.slug, code: venueCode },
+              },
+            ],
+          });
+
+          return {
+            tenantId: tenant.id,
+            venueId: venue.id,
+            venueSlug: venue.slug,
+            venueCode: venue.code,
+            alreadyExisted: false,
+          };
+        },
+        // Same widened budget as the booking engine: this is ~7 statements
+        // against Neon, and the default 5s is uncomfortably close.
+        { timeout: 15_000, maxWait: 5_000 },
+      );
+    } catch (err) {
+      lastError = err;
+      // Only a Venue.code collision is worth retrying. A slug collision is
+      // the owner's input and must surface as a form error; anything else is
+      // a real failure.
+      if (isUniqueViolationOn(err, 'code')) continue;
+      throw err;
+    }
+  }
+
+  throw lastError ?? new Error('Could not allocate a venue code.');
+}
+
+/** True when err is a P2002 whose target includes the given column. */
+function isUniqueViolationOn(err: unknown, column: string): boolean {
+  if (!(err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'P2002')) {
+    return false;
+  }
+  const target = (err as { meta?: { target?: unknown } }).meta?.target;
+  const names = Array.isArray(target) ? target : typeof target === 'string' ? [target] : [];
+  return names.some((n) => String(n).includes(column));
+}
+
+export { isUniqueViolationOn };

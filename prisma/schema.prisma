@@ -156,10 +156,16 @@ model User {
 /// present so a future billing layer doesn't need a schema migration to
 /// add them, per the SaaS architecture plan's explicit non-goal.
 model Tenant {
-  id               String   @id @default(cuid())
-  clerkOrgId       String?  @unique
-  name             String
-  ownerClerkUserId String?
+  id         String  @id @default(cuid())
+  clerkOrgId String? @unique
+  name       String
+
+  /// UNIQUE: one business per owner, enforced by the database rather than by
+  /// onboarding remembering to check. Onboarding does check (and returns the
+  /// existing tenant instead of erroring), but a double-submitted form is a
+  /// race that check cannot win on its own. Nullable because Tenant Zero
+  /// predates Clerk and has no owner until the operator is bound.
+  ownerClerkUserId String? @unique
   ownerEmail       String?
   plan             String   @default("free")
   status           String   @default("active")
