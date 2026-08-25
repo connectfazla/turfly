@@ -409,3 +409,17 @@ marketing route once path-based routing made the venue's slug a real URL segment
 `green-pitch-arena` (`scripts/rename-demo-venue-slug.ts`, `lib/demo.ts`'s
 `DEMO_VENUE_SLUG`) — `/demo` now links to it as "the public side" of the demo, so a
 prospect can see both the owner dashboard and the actual customer booking page.
+
+**`Venue.bkashNumber` money-safety fix, same session:** found while checking the live
+production database for the work above — it defaulted to the literal string
+`"01700000000"`, never actually empty, so every venue (including a brand-new one no
+owner had touched yet) looked "configured" and would tell a real customer to send a
+real bKash deposit to a number that was never anyone's. Venue Zero itself, publicly
+bookable at `turfly.xyz` right now, still had it (zero real bookings against it ever,
+so no real customer was actually affected — but the bug was live). Fixed: the column
+is now nullable with no default (migration backfills the exact placeholder string to
+`NULL`), and `app/book/confirm/page.tsx` refuses to render `ConfirmForm` at all when a
+venue's `bkashNumber` is unset — a clear "this venue hasn't finished setting up online
+payments yet" message instead of ever falling through to a blank/fake number. The
+owner-facing payment settings form already requires a valid-looking number to save at
+all, so `null` can only mean "never configured," never "owner cleared it."
