@@ -35,8 +35,17 @@ export function UtilizationHeatmap({ cells }: { cells: HeatMapCell[] }) {
                     <div
                       className="mx-auto flex h-8 w-10 items-center justify-center rounded-(--radius-input) tabular-nums text-text"
                       style={{
-                        backgroundColor: count === 0 ? '#F9FAFB' : `rgba(21, 128, 61, ${0.12 + intensity * 0.68})`,
-                        color: intensity > 0.55 ? '#FFFFFF' : '#111827',
+                        // color-mix() against the CSS custom properties, not a
+                        // hardcoded rgba(21,128,61,...) — that hex happened to
+                        // match --color-accent's LIGHT-theme value only, so it
+                        // silently diverged from [data-dashboard-theme]'s own
+                        // (currently identical, but no longer coupled) accent.
+                        // This resolves against whichever theme is active.
+                        backgroundColor:
+                          count === 0
+                            ? 'var(--color-surface-muted)'
+                            : `color-mix(in srgb, var(--color-accent) ${Math.round(12 + intensity * 68)}%, transparent)`,
+                        color: intensity > 0.55 ? 'var(--color-surface)' : 'var(--color-text)',
                       }}
                       title={`${DAY_LABELS[dayOfWeek]} ${slotLabel(slotIndex as SlotIndex)}: ${count} booking${count === 1 ? '' : 's'}`}
                     >

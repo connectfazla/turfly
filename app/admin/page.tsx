@@ -158,10 +158,19 @@ export default async function AdminDashboardPage({ searchParams }: Props) {
             <div
               key={index}
               className={cn(
-                'flex flex-wrap items-center gap-3 border-b border-border px-4 py-3 transition-colors last:border-b-0',
+                'relative flex flex-wrap items-center gap-3 border-b border-border px-4 py-3 transition-colors last:border-b-0',
                 isCurrent ? 'bg-accent-soft/60' : 'hover:bg-surface-muted',
               )}
             >
+              {/* Same left-accent-stripe language sidebar-nav.tsx uses for
+               * "this is the active one" — one visual grammar for "current"
+               * across the whole dashboard, not a background tint here and
+               * a bar there. Background tint alone still satisfies "state is
+               * never colour-only" via the row's own time label; this is
+               * added emphasis, not the only cue. */}
+              {isCurrent ? (
+                <span className="absolute inset-y-0 left-0 w-1 rounded-r-full bg-accent" aria-hidden="true" />
+              ) : null}
               <div className="w-28 shrink-0 text-body font-medium tabular-nums text-text">{slotLabel(index)}</div>
 
               {maintenance ? (

@@ -13,11 +13,21 @@ export function RevenueChart({ buckets }: { buckets: RevenueBucket[] }) {
 
   return (
     <ResponsiveContainer width="100%" height={280}>
+      {/* CSS custom properties, not hardcoded hex — SVG presentation
+        * attributes accept var() in every browser this app targets, so
+        * this chart now follows [data-dashboard-theme]'s neutrals/accent
+        * instead of a copy that happened to match them once and would
+        * silently drift the next time the theme's palette moves. */}
       <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
-        <CartesianGrid stroke="#E5E7EB" vertical={false} />
-        <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#6B7280' }} axisLine={{ stroke: '#E5E7EB' }} tickLine={false} />
+        <CartesianGrid stroke="var(--color-border)" vertical={false} />
+        <XAxis
+          dataKey="label"
+          tick={{ fontSize: 12, fill: 'var(--color-text-muted)' }}
+          axisLine={{ stroke: 'var(--color-border)' }}
+          tickLine={false}
+        />
         <YAxis
-          tick={{ fontSize: 12, fill: '#6B7280' }}
+          tick={{ fontSize: 12, fill: 'var(--color-text-muted)' }}
           axisLine={false}
           tickLine={false}
           tickFormatter={(v: number) => formatBDT(v)}
@@ -25,10 +35,10 @@ export function RevenueChart({ buckets }: { buckets: RevenueBucket[] }) {
         />
         <Tooltip
           formatter={(value) => [formatBDT(Number(value ?? 0)), 'Revenue']}
-          contentStyle={{ borderRadius: 8, borderColor: '#E5E7EB', fontSize: 12 }}
+          contentStyle={{ borderRadius: 8, borderColor: 'var(--color-border)', fontSize: 12 }}
         />
-        <Legend wrapperStyle={{ fontSize: 12, color: '#6B7280' }} />
-        <Bar dataKey="revenue" name="Revenue" fill="#15803D" radius={[4, 4, 0, 0]} />
+        <Legend wrapperStyle={{ fontSize: 12, color: 'var(--color-text-muted)' }} />
+        <Bar dataKey="revenue" name="Revenue" fill="var(--color-accent)" radius={[4, 4, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );

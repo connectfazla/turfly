@@ -14,7 +14,7 @@ export function StatCard({
   icon?: LucideIcon;
 }) {
   return (
-    <div className="group rounded-(--radius-card) border border-border bg-surface p-4 shadow-(--shadow-elevated) transition-shadow hover:shadow-[0_1px_2px_rgba(24,24,27,0.04),0_12px_32px_rgba(24,24,27,0.09)]">
+    <div className="group rounded-(--radius-card) border border-border bg-surface p-4 shadow-(--shadow-elevated) transition-[transform,box-shadow] hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(24,24,27,0.04),0_12px_32px_rgba(24,24,27,0.09)]">
       <div className="flex items-start justify-between gap-2">
         <div className="text-caption font-medium text-text-muted">{label}</div>
         {Icon ? (
