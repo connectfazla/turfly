@@ -157,6 +157,16 @@ Type scale (Inter via `next/font`, tabular figures for times and money):
 
 Slot grid: 4 columns desktop, 2 tablet, 1 phone. Render all 16 positions always — the day must look the same shape whatever is booked.
 
+**The marketing surface is the one exception to this section** — `app/page.tsx` and
+`components/marketing/*` only. It runs a bigger hero type size (`--text-hero`, 44px,
+56px at `lg`), rounder shapes (`--radius-marketing` 20px / 14px), pill buttons, and
+white text over a scrimmed photograph. The nine colours are unchanged; nothing new was
+added to the palette. The reason for the split: the app is dense and functional, where
+§6's restraint is exactly right, while a product landing page whose headline is 30px
+and whose corners match a data table reads as unfinished. Those tokens are fenced with
+a comment in `globals.css` and must not appear in `/admin`, `/super-admin`, or the
+booking flow.
+
 ---
 
 ## 7. Routes

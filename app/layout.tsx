@@ -9,9 +9,26 @@ const inter = Inter({
   display: 'swap',
 });
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://turfly.app';
+
+/**
+ * Site-wide defaults. Individual pages override `title` and `description`;
+ * the template means a page setting `title: 'Rules'` renders as
+ * "Rules — Turfly" without every page having to repeat the brand.
+ *
+ * metadataBase is what turns the relative image paths in each page's
+ * openGraph block into the absolute URLs the crawlers require.
+ */
 export const metadata: Metadata = {
-  title: 'Turfly: Book the pitch',
-  description: 'Book the football turf online. No login required.',
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: 'Turfly — turf booking software for Bangladesh',
+    template: '%s — Turfly',
+  },
+  description:
+    'Booking software for turf owners in Bangladesh. Take bookings online and at the counter, verify bKash deposits, and know what every slot earned.',
+  applicationName: 'Turfly',
+  formatDetection: { telephone: false },
 };
 
 export default function RootLayout({
@@ -20,7 +37,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body className="antialiased">
         <ClerkProvider>{children}</ClerkProvider>
       </body>

@@ -1,20 +1,33 @@
 import type { MetadataRoute } from 'next';
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://turfly.app';
+
 /**
- * ROUTE: /robots.txt — generated, public.
- *
- * Public booking pages are fine to index; nothing under /admin, /login,
- * or /api should ever show up in search results (none of it is secret —
- * middleware.ts already gates /admin/* behind a session — but there's no
- * reason to invite crawler traffic at authenticated or programmatic
- * routes either).
+ * Crawlers get the marketing site and the public booking pages, and nothing
+ * else. The disallowed paths are not secrets — they are all authenticated —
+ * but there is no reason to spend crawl budget on sign-in redirects, and a
+ * booking-confirmation URL keyed by reference should never surface in search
+ * results even though knowing one only reveals what the holder already knows.
  */
 export default function robots(): MetadataRoute.Robots {
   return {
-    rules: {
-      userAgent: '*',
-      allow: '/',
-      disallow: ['/admin', '/admin/', '/login', '/api/', '/status'],
-    },
+    rules: [
+      {
+        userAgent: '*',
+        allow: '/',
+        disallow: [
+          '/admin',
+          '/super-admin',
+          '/sign-in',
+          '/sign-up',
+          '/api/',
+          '/book/confirm',
+          '/book/success/',
+          '/booking/lookup',
+        ],
+      },
+    ],
+    sitemap: `${SITE_URL}/sitemap.xml`,
+    host: SITE_URL,
   };
 }

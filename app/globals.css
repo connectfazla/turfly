@@ -65,6 +65,21 @@
   --font-sans: var(--font-inter);
 
   /* Type scale — CLAUDE.md §6: 30/700 · 20/600 · 16/600 · 14/400 · 12/400 */
+  /* MARKETING SURFACE ONLY — the only additions to CLAUDE.md §6's locked
+     scale, deliberately fenced. The app's type stops at 30px and its radii
+     at 8px because every app screen is dense and functional; a marketing
+     hero at 30px reads as an error page, and a dashboard where everything
+     is a pill reads as sloppy. Use these ONLY on the public marketing
+     surface (app/page.tsx + components/marketing/*). Never inside /admin,
+     /super-admin, or the booking flow. */
+  --radius-marketing: 20px;
+  --radius-marketing-sm: 14px;
+
+  --text-hero: 44px;
+  --text-hero--line-height: 46px;
+  --text-hero--font-weight: 700;
+  --text-hero--letter-spacing: -0.02em;
+
   --text-display: 30px;
   --text-display--line-height: 38px;
   --text-display--font-weight: 700;
