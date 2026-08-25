@@ -163,12 +163,23 @@ model Tenant {
   ownerEmail  String?
   plan             String   @default("free")
   status           String   @default("active")
+  /// Marks the sandbox tenant seeded by scripts/create-demo-venue.ts, shown
+  /// on a live subdomain and behind an instant no-password login so
+  /// prospective owners can try the real dashboard before signing up.
+  /// Gates two things elsewhere: inviteStaffAction refuses to send real
+  /// invitation email for a demo tenant (the login is public and unauthenticated,
+  /// so without this it is a free email-relay), and setStaffActiveAction /
+  /// changeStaffRoleAction refuse to touch the two seeded accounts the
+  /// role-switcher depends on, so a demo visitor can never break the demo
+  /// for the next one.
+  isDemo           Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   venues Venue[]
 
   @@index([ownerUserId])
+  @@index([isDemo])
 }
 
 /// A single physical turf. One Tenant can own several (multi-venue

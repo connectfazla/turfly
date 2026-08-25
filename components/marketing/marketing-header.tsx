@@ -43,6 +43,12 @@ export function MarketingHeader() {
           >
             Features
           </Link>
+          <Link
+            href="/demo"
+            className="text-text-muted hover:text-text hidden min-h-11 items-center px-3 transition-colors sm:inline-flex"
+          >
+            Live demo
+          </Link>
 
           <Link
             href="/sign-in"

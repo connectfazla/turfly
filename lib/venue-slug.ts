@@ -21,7 +21,7 @@ const RESERVED_SLUGS = new Set([
   // platform routing
   'www', 'app', 'admin', 'api', 'dashboard', 'super-admin', 'onboarding',
   'sign-in', 'sign-up', 'book', 'booking', 'rules', 'status', 'default',
-  'static', 'assets', 'cdn', 'clerk', 'preview', 'staging', 'test',
+  'static', 'assets', 'cdn', 'clerk', 'preview', 'staging', 'test', 'demo',
   // impersonation risk
   'mail', 'email', 'accounts', 'account', 'login', 'secure', 'security',
   'support', 'help', 'billing', 'pay', 'payment', 'payments', 'verify',

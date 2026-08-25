@@ -17,6 +17,17 @@ import { requireRole, ForbiddenError, UnauthorizedError } from '@/lib/auth/requi
 import { issueToken } from '@/lib/auth/tokens';
 import { sendAuthEmail } from '@/lib/notifications/auth-email';
 
+/** True when the caller's tenant is the public sales demo (Tenant.isDemo).
+ * Two actions below refuse outright for a demo tenant — see each guard for
+ * why, but the short version is: this venue's login is unauthenticated and
+ * public, so anything that sends real email or removes the accounts the
+ * role-switcher depends on has to be off-limits regardless of who is
+ * "signed in" as its Owner at the time. */
+async function isDemoTenant(tenantId: string): Promise<boolean> {
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isDemo: true } });
+  return tenant?.isDemo ?? false;
+}
+
 type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
 function fail(error: unknown): { ok: false; error: string } {
@@ -44,6 +55,19 @@ export async function inviteStaffAction(
 
     if (parsed.email === owner.email.toLowerCase()) {
       return { ok: false, error: 'You are already the owner of this venue.' };
+    }
+
+    // The demo login is public and unauthenticated — anyone can become its
+    // Owner from /demo with no credentials. Without this, inviteStaffAction
+    // would be a free way to relay a real email to any address a visitor
+    // types, from a form nothing gates. The demo already has its Manager and
+    // Bookie seeded for exploring the role model; a third invite adds
+    // nothing a prospect needs to see.
+    if (await isDemoTenant(owner.tenantId)) {
+      return {
+        ok: false,
+        error: 'Inviting staff is disabled in the demo — try the seeded Manager and Bookie accounts instead.',
+      };
     }
 
     const venue = await prisma.venue.findUnique({ where: { id: owner.venueId }, select: { name: true } });
@@ -132,6 +156,15 @@ export async function setStaffActiveAction(input: z.input<typeof setActiveSchema
       return { ok: false, error: 'You cannot deactivate your own account.' };
     }
 
+    // The role-switcher on /demo signs a visitor straight into these two
+    // grants by role. Letting a demo "Owner" deactivate the Manager or
+    // Bookie would break the demo for the next visitor with no reset in
+    // between — so this refuses unconditionally for a demo tenant, not just
+    // for these two users specifically.
+    if (await isDemoTenant(owner.tenantId)) {
+      return { ok: false, error: 'Staff cannot be changed in the demo.' };
+    }
+
     const updated = await prisma.venueStaff.updateMany({
       where: { venueId: owner.venueId, userId },
       data: { isActive },
@@ -163,6 +196,12 @@ export async function changeStaffRoleAction(input: z.input<typeof changeRoleSche
     const owner = await requireRole('OWNER');
     const { userId, role } = changeRoleSchema.parse(input);
     if (userId === owner.id) return { ok: false, error: 'You cannot change your own role.' };
+
+    // Same reasoning as setStaffActiveAction: the demo's Manager and Bookie
+    // roles are what the /demo role-switcher promises, and must stay fixed.
+    if (await isDemoTenant(owner.tenantId)) {
+      return { ok: false, error: 'Staff cannot be changed in the demo.' };
+    }
 
     const before = await prisma.venueStaff.findUnique({
       where: { venueId_userId: { venueId: owner.venueId, userId } },

@@ -10,7 +10,7 @@
 import { prisma } from '@/lib/prisma';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { requireRole } from '@/lib/auth/require-role';
+import { requireRoleForPage } from '@/lib/auth/require-role-for-page';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +37,7 @@ export default async function AdminAuditPage() {
   // Owner + Manager. A Bookie is excluded because the audit log reveals
   // payment amounts and verification decisions — the exact financial detail
   // that role exists not to see.
-  const staff = await requireRole('OWNER', 'MANAGER');
+  const staff = await requireRoleForPage('OWNER', 'MANAGER');
   // Audit rows carry other tenants' mutation history and staff names, so
   // this is scoped like everything else. Rows written before venueId
   // existed have null and are simply not shown here.

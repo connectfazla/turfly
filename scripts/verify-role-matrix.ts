@@ -42,7 +42,10 @@ function check(pass: boolean, label: string) {
  * requireRole() with no arguments — any staff role. */
 function guardRoles(file: string): Role[] | null {
   const src = readFileSync(file, 'utf8');
-  const m = src.match(/await requireRole(?:ForVenue)?\(([^)]*)\)/);
+  // requireRoleForPage() (lib/auth/require-role-for-page.ts) is the
+  // page-only wrapper that redirects instead of throwing — same role
+  // arguments, so it counts exactly like a direct requireRole(...) call.
+  const m = src.match(/await requireRole(?:ForVenue|ForPage)?\(([^)]*)\)/);
   if (!m) return null;
   const roles = [...m[1]!.matchAll(/'(OWNER|MANAGER|BOOKIE)'/g)].map((x) => x[1] as Role);
   return roles;

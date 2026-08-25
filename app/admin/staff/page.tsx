@@ -6,7 +6,7 @@
  * venue, and it never creates credentials — Clerk emails an invitation and
  * the person sets up their own account.
  */
-import { requireRole } from '@/lib/auth/require-role';
+import { requireRoleForPage } from '@/lib/auth/require-role-for-page';
 import { prisma } from '@/lib/prisma';
 import { formatDateLong } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +17,7 @@ import { StaffRowControls } from '@/components/admin/staff-row-controls';
 export const dynamic = 'force-dynamic';
 
 export default async function StaffPage() {
-  const owner = await requireRole('OWNER');
+  const owner = await requireRoleForPage('OWNER');
 
   const [staff, venue] = await Promise.all([
     prisma.venueStaff.findMany({

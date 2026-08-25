@@ -14,7 +14,7 @@ import { prisma } from '@/lib/prisma';
 import { NOON_SLOT_INDEXES, PEAK_SLOT_INDEXES } from '@/lib/slots';
 import { PricingForm } from '@/components/admin/pricing-form';
 import { PaymentSettingsForm } from '@/components/admin/payment-settings-form';
-import { requireRole } from '@/lib/auth/require-role';
+import { requireRoleForPage } from '@/lib/auth/require-role-for-page';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +23,7 @@ const AFTERNOON_SAMPLE_SLOT = 0; // 00:00 — bookable, never noon or peak
 export default async function AdminPricingPage() {
   // OWNER-only route. This is the real gate: middleware only proves
   // somebody is signed in, and the sidebar hiding the link is cosmetic.
-  const staff = await requireRole('OWNER');
+  const staff = await requireRoleForPage('OWNER');
   const { venueId } = staff;
   const [noonRow, afternoonRow, weekendAfternoonRow, nightRow, weekendNightRow, venue] = await Promise.all([
     prisma.slotRule.findFirst({ where: { venueId, dayOfWeek: 1, slotIndex: NOON_SLOT_INDEXES[0] } }),

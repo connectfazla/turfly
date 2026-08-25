@@ -13,7 +13,7 @@ import { ReportsFilterForm } from '@/components/admin/reports-filter-form';
 import { StatCard } from '@/components/admin/stat-card';
 import { RevenueChart } from '@/components/admin/revenue-chart';
 import { UtilizationHeatmap } from '@/components/admin/utilization-heatmap';
-import { requireRole } from '@/lib/auth/require-role';
+import { requireRoleForPage } from '@/lib/auth/require-role-for-page';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,7 +40,7 @@ export default async function AdminReportsPage({ searchParams }: Props) {
   // already allowed them, so the page was the inconsistent half.
   // This is the real gate: middleware only proves somebody is signed in, and
   // the sidebar hiding the link is cosmetic.
-  const staff = await requireRole('OWNER', 'MANAGER');
+  const staff = await requireRoleForPage('OWNER', 'MANAGER');
   const params = await searchParams;
   const now = new Date();
   const from = (params.from ? parseDateParam(params.from) : null) ?? startOfMonth(now);

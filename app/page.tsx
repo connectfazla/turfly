@@ -249,6 +249,13 @@ export default function HomePage() {
               </dl>
 
               <p className="text-caption text-white/70">
+                <Link href="/demo" className="text-white underline underline-offset-4 hover:no-underline">
+                  Try the live demo
+                </Link>{' '}
+                — no signup, real dashboard, sample data.
+              </p>
+
+              <p className="text-caption text-white/70">
                 Looking to book a pitch to play on?{' '}
                 <Link href="/book" className="text-white underline underline-offset-4 hover:no-underline">
                   Find a slot

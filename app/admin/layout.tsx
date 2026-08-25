@@ -7,6 +7,8 @@ import { VenueNotSelectedError } from '@/lib/auth/active-venue';
 import { signOutAction } from '@/app/actions/auth';
 import { SidebarNav } from '@/components/admin/sidebar-nav';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { DemoBanner } from '@/components/demo/demo-banner';
+import { prisma } from '@/lib/prisma';
 
 /** Dashboard-only font (CLAUDE.md §11's design-system note) — the public
  * booking pages keep Inter; this is scoped to this layout's subtree via
@@ -104,6 +106,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // name from the host would show every staff member "Turfly" (Venue Zero)
   // instead of their own turf.
   const venueName = await getVenueName(staff.venueId);
+  // One cheap lookup, not carried on StaffUser itself — this is display-only
+  // (which banner to show), never an authorization input. See lib/demo.ts's
+  // header comment on why nothing security-relevant is keyed off it here.
+  const tenant = await prisma.tenant.findUnique({ where: { id: staff.tenantId }, select: { isDemo: true } });
 
   return (
     <div data-dashboard-theme className={`flex min-h-dvh ${geist.variable}`}>
@@ -148,6 +154,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        {tenant?.isDemo ? <DemoBanner role={staff.role} /> : null}
         {/* Mobile only (< md): the old top-bar + horizontal-scroll nav,
          * unchanged in behavior from before the sidebar existed. */}
         <header className="border-border bg-surface border-b md:hidden">
