@@ -131,6 +131,18 @@ export const paymentSettingsSchema = z.object({
 });
 export type PaymentSettingsFormInput = z.input<typeof paymentSettingsSchema>;
 
+// ---------------------------------------------------------------- branding
+
+const LOGO_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'] as const;
+const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2MB — a logo, not a photo library
+
+export const venueLogoSchema = z.object({
+  logo: z
+    .file()
+    .max(MAX_LOGO_BYTES, 'Keep the logo under 2MB')
+    .mime([...LOGO_MIME_TYPES], 'Use a PNG, JPEG, WebP or SVG image'),
+});
+
 // ---------------------------------------------------------------- staff
 //
 // The password-based create/enable/change-role schemas that lived here died

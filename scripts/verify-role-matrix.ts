@@ -26,7 +26,7 @@ const FINANCIAL_ROUTES = [
   'app/admin/customers/page.tsx',
   'app/admin/reports/export/route.ts',
 ];
-const OWNER_ONLY_ROUTES = ['app/admin/pricing/page.tsx', 'app/admin/staff/page.tsx'];
+const OWNER_ONLY_ROUTES = ['app/admin/pricing/page.tsx', 'app/admin/staff/page.tsx', 'app/admin/branding/page.tsx'];
 
 /** The payment actions. A Bookie taking a booking is fine; a Bookie recording
  * or verifying money is the thing the role exists to prevent. */

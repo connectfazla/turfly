@@ -38,6 +38,15 @@ const nextConfig: NextConfig = {
   // Don't advertise "X-Powered-By: Next.js" - no functional benefit to a
   // would-be attacker knowing the framework for free.
   poweredByHeader: false,
+  images: {
+    remotePatterns: [
+      // Owner-uploaded venue logos (app/actions/venue-branding.ts) live in
+      // Vercel Blob's public storage — every store gets its own
+      // `{id}.public.blob.vercel-storage.com` host, so this has to be a
+      // wildcard rather than one fixed hostname.
+      { protocol: "https", hostname: "*.public.blob.vercel-storage.com" },
+    ],
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

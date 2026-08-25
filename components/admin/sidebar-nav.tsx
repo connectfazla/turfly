@@ -12,6 +12,7 @@ import {
   BarChart3,
   History,
   UserCog,
+  Palette,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -46,6 +47,7 @@ const STAFF_LINKS: NavLink[] = [
  * only half true. */
 const ADMIN_LINKS: NavLink[] = [
   { href: '/admin/pricing', label: 'Pricing', icon: Tag, roles: OWNER_ONLY },
+  { href: '/admin/branding', label: 'Branding', icon: Palette, roles: OWNER_ONLY },
   { href: '/admin/staff', label: 'Staff', icon: UserCog, roles: OWNER_ONLY },
   { href: '/admin/reports', label: 'Reports', icon: BarChart3, roles: MONEY },
   { href: '/admin/audit', label: 'Audit', icon: History, roles: MONEY },

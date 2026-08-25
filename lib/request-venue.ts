@@ -17,7 +17,12 @@ import { prisma } from './prisma';
 import { resolveHost } from './subdomain';
 import { getDefaultVenueId } from './tenant';
 
-const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? 'turfly.xyz';
+/** Exported so anything that needs to BUILD a venue URL (the admin sidebar's
+ * "your booking page" link, lib/subdomain.ts's venueUrl()) uses the exact
+ * same fallback as the host-resolution path above, rather than a second
+ * `process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? '...'` that could silently drift
+ * from this one. */
+export const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? 'turfly.xyz';
 
 export interface RequestVenue {
   id: string;

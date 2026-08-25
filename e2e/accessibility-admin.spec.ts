@@ -20,7 +20,7 @@ import { hashPassword } from '../lib/auth/password';
 import { seedSlotRulesForVenue } from '../lib/provisioning';
 
 const ADMIN_ROUTES = ['/admin', '/admin/calendar', '/admin/bookings', '/admin/bookings/new', '/admin/blackouts', '/admin/customers'];
-const ADMIN_ONLY_ROUTES = ['/admin/pricing', '/admin/reports', '/admin/audit'];
+const ADMIN_ONLY_ROUTES = ['/admin/pricing', '/admin/branding', '/admin/reports', '/admin/audit'];
 
 const FIXTURE_SLUG = 'e2e-axe-fixture';
 const OWNER_EMAIL = 'e2e-axe-owner@turfly.invalid';

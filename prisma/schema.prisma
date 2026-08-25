@@ -199,6 +199,11 @@ model Venue {
   /// lib/booking-engine.ts).
   code                     String   @unique
   name                     String
+  /// A Vercel Blob public URL, or null (most venues start without one).
+  /// Owner-uploaded via app/actions/venue-branding.ts — the ONLY writer.
+  /// Nullable and additive: no backfill needed, every existing venue is
+  /// simply logo-less until its owner sets one.
+  logoUrl                  String?
   contactPhone             String
   contactEmail             String?
   rulesText                String

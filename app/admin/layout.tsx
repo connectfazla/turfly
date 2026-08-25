@@ -2,11 +2,14 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Geist } from 'next/font/google';
 import { LogOut } from 'lucide-react';
-import { getVenueName } from '@/lib/venue';
+import { getVenueName, getVenueSetting } from '@/lib/venue';
 import { requireRole } from '@/lib/auth/require-role';
 import { VenueNotSelectedError, accessibleVenueIds } from '@/lib/auth/active-venue';
+import { ROOT_DOMAIN } from '@/lib/request-venue';
+import { venueUrl } from '@/lib/subdomain';
 import { signOutAction } from '@/app/actions/auth';
 import { SidebarNav } from '@/components/admin/sidebar-nav';
+import { BookingLink } from '@/components/admin/booking-link';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { DemoBanner } from '@/components/demo/demo-banner';
 import { prisma } from '@/lib/prisma';
@@ -103,6 +106,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // name from the host would show every staff member "Turfly" (Venue Zero)
   // instead of their own turf.
   const venueName = await getVenueName(staff.venueId);
+  // Same request-memoized lookup getVenueName() already made internally
+  // (React cache(), keyed by venueId) — this is a second call, not a second
+  // query, and it's the one place that also has the slug for the booking
+  // link below.
+  const venue = await getVenueSetting(staff.venueId);
+  const bookingUrl = venue ? venueUrl(venue.slug, ROOT_DOMAIN) : null;
   // One cheap lookup, not carried on StaffUser itself — this is display-only
   // (which banner to show), never an authorization input. See lib/demo.ts's
   // header comment on why nothing security-relevant is keyed off it here.
@@ -125,26 +134,34 @@ export default async function AdminLayout({ children }: { children: React.ReactN
        * shell behaves; without this the footer (sign-out) drifted off
        * the bottom of the screen on any page taller than the viewport. */}
       <aside className="border-border bg-surface sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r md:flex">
-        <div className="flex items-center gap-2.5 px-5 py-5">
-          <div className="bg-accent text-caption flex size-7 shrink-0 items-center justify-center rounded-lg font-semibold text-white">
-            {venueName.slice(0, 1).toUpperCase()}
-          </div>
-          <div className="min-w-0">
-            <Link
-              href="/admin"
-              className="text-subheading text-text block truncate font-semibold tracking-tight"
-            >
-              {venueName}
-            </Link>
-            {hasMultipleVenues ? (
+        <div className="flex flex-col gap-2 px-5 py-5">
+          <div className="flex items-center gap-2.5">
+            <div className="bg-accent text-caption flex size-7 shrink-0 items-center justify-center rounded-lg font-semibold text-white">
+              {venueName.slice(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0">
               <Link
-                href="/select-venue"
-                className="text-caption text-text-muted hover:text-text underline decoration-dotted underline-offset-2"
+                href="/admin"
+                className="text-subheading text-text block truncate font-semibold tracking-tight"
               >
-                Switch venue
+                {venueName}
               </Link>
-            ) : null}
+              {hasMultipleVenues ? (
+                <Link
+                  href="/select-venue"
+                  className="text-caption text-text-muted hover:text-text underline decoration-dotted underline-offset-2"
+                >
+                  Switch venue
+                </Link>
+              ) : null}
+            </div>
           </div>
+          {/* The venue's own public booking-page link - previously had no
+           * home anywhere in the admin panel at all (app/admin/branding
+           * shows it more fully, with the logo). */}
+          {bookingUrl ? (
+            <BookingLink url={bookingUrl} className="pl-[38px] text-caption text-text-muted hover:text-accent" />
+          ) : null}
         </div>
         <div className="flex-1 overflow-y-auto px-3 pb-3">
           <SidebarNav role={staff.role} vertical />
