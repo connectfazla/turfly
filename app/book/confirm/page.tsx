@@ -63,6 +63,22 @@ export default async function ConfirmPage({ searchParams }: Props) {
               </Link>
             </div>
           </div>
+        ) : !venue?.bkashNumber ? (
+          // A venue with no bKash number set (Venue.bkashNumber is nullable,
+          // no default — prisma/schema.prisma's comment on that field has
+          // the story) has no real destination to send this customer's
+          // money to. Refusing here, rather than falling through to
+          // ConfirmForm with an empty/placeholder number, is the entire
+          // point of that field being nullable at all.
+          <div className="mt-6 rounded-(--radius-card) border border-warning/30 bg-surface-muted p-4 text-body text-warning">
+            This venue hasn&apos;t finished setting up online payments yet, so this slot can&apos;t be
+            confirmed here. Please contact the venue directly to book it.
+            <div className="mt-3">
+              <Link href={`/book/${dateParam}`} className="font-medium text-accent underline">
+                Back to available slots
+              </Link>
+            </div>
+          </div>
         ) : (
           <>
             <p className="mt-1 text-body text-text-muted">
@@ -75,7 +91,7 @@ export default async function ConfirmPage({ searchParams }: Props) {
               slotIndex={booking.slotIndex}
               holdExpiresAt={booking.holdExpiresAt!.toISOString()}
               priceAmount={booking.priceAmount.toString()}
-              bkashNumber={venue?.bkashNumber ?? ''}
+              bkashNumber={venue.bkashNumber}
               depositAmount={Math.round((Number(booking.priceAmount) * (venue?.depositPercent ?? 30)) / 100)}
             />
           </>

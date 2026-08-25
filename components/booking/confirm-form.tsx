@@ -19,6 +19,8 @@ export interface ConfirmFormProps {
   slotIndex: number;
   holdExpiresAt: string;
   priceAmount: string;
+  /** Never empty — app/book/confirm/page.tsx renders a blocking notice
+   * instead of this form at all when the venue has no bKash number set. */
   bkashNumber: string;
   /** Now computed as venue.depositPercent% of this booking's price
    * (VenueSetting's old fixed advanceAmount is retired — see
@@ -79,7 +81,7 @@ export function ConfirmForm({
           <span className="font-semibold text-text">Send Money</span> to:
         </p>
         <p className="select-all text-heading font-semibold tracking-wide text-accent" aria-label="bKash number">
-          {bkashNumber || 'Set the bKash number in /admin/pricing'}
+          {bkashNumber}
         </p>
         <ol className="list-decimal space-y-1 pl-5 text-caption text-text-muted">
           <li>Open your bKash app and choose Send Money.</li>

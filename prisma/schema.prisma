@@ -210,7 +210,16 @@ model Venue {
   holdMinutes              Int      @default(10)
   cancellationWindowHours  Int      @default(6)
   bookingWindowDays        Int      @default(14)
-  bkashNumber              String   @default("01700000000")
+  /// Nullable, no default — a placeholder-looking default number
+  /// (`01700000000`) used to sit here, which meant a brand-new venue was
+  /// immediately live and bookable, telling real customers to send real
+  /// bKash money to a number that was never anyone's. Found by testing
+  /// this against the actual production database, where Venue Zero itself
+  /// still had it. Null means "not configured yet" and
+  /// components/booking/confirm-form.tsx (via app/book/confirm/page.tsx)
+  /// refuses to show payment instructions or collect a TRXN claim until an
+  /// owner sets a real number from /admin/pricing.
+  bkashNumber              String?
   /// Replaces VenueSetting.advanceAmount's fixed BDT figure — the deposit
   /// customers must pay is now a percentage of each booking's price.
   /// Booking.depositAmount (a later pass) snapshots the computed BDT
