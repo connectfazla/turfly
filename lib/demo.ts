@@ -9,7 +9,14 @@
  */
 import { prisma } from './prisma';
 
-export const DEMO_VENUE_SLUG = 'demo';
+/** The demo venue's OWN slug — unrelated to the `/demo` marketing route
+ * this file backs. It deliberately is NOT `demo`: that word is reserved
+ * (lib/venue-slug.ts's RESERVED_SLUGS) precisely so it can never be a real
+ * venue's public address, and the demo venue needs a real, unreserved one
+ * to be reachable at turfly.xyz/{slug} like any other tenant — see
+ * scripts/rename-demo-venue-slug.ts for how an already-seeded database
+ * gets moved off the old `demo` slug. */
+export const DEMO_VENUE_SLUG = 'green-pitch-arena';
 
 export type DemoRole = 'OWNER' | 'MANAGER' | 'BOOKIE';
 

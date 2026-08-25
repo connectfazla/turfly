@@ -8,7 +8,7 @@
  */
 import Link from 'next/link';
 import { CalendarCheck, ShieldCheck, Wallet } from 'lucide-react';
-import { getDemoVenue } from '@/lib/demo';
+import { DEMO_VENUE_SLUG, getDemoVenue } from '@/lib/demo';
 import { MarketingHeader } from '@/components/marketing/marketing-header';
 import { MarketingFooter } from '@/components/marketing/marketing-footer';
 import { DemoRolePicker } from '@/components/demo/demo-role-picker';
@@ -66,6 +66,16 @@ export default async function DemoPage() {
               </p>
             )}
           </div>
+
+          {demo ? (
+            <p className="mt-4 text-body text-text-muted">
+              That&apos;s the owner&apos;s side. Your customers never see any of it —{' '}
+              <Link href={`/${DEMO_VENUE_SLUG}`} className="text-accent underline underline-offset-2 hover:no-underline">
+                here&apos;s what they book from
+              </Link>
+              , the exact page this venue&apos;s real link points at.
+            </p>
+          ) : null}
 
           <p className="mt-6 text-caption text-text-muted">
             This is a shared sandbox — other visitors can see the same sample data. Nothing here is a real business or

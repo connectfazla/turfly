@@ -173,7 +173,7 @@ booking flow.
 
 ```
 Public    /  /book  /book/[date]  /book/confirm  /book/success/[ref]
-          /booking/lookup  /rules  /demo
+          /booking/lookup  /rules  /demo  /booking-not-found
 Auth      /sign-in  /sign-up  /verify-email  /forgot-password
           /reset-password  /accept-invite  /onboarding  /select-venue
 Staff     /admin  /admin/calendar  /admin/bookings
@@ -184,9 +184,18 @@ Owner+Mgr /admin/reports  /admin/audit  /admin/customers
 Operator  /super-admin  /super-admin/codes  /super-admin/tenants
 ```
 
-Every venue is also served at `{slug}.turfly.xyz` — the same public pages,
-resolved by host via `lib/request-venue.ts`. The bare domain serves the
-marketing site and Venue Zero's booking pages.
+Every venue is also served at `turfly.xyz/{slug}` — path-based, and the
+PRIMARY scheme in production: Cloudflare stays the authoritative nameserver
+(no NS delegation, no wildcard cert), which subdomain routing would need.
+`middleware.ts` rewrites `/{slug}/...` to the un-prefixed route and stamps
+`PATH_VENUE_COOKIE`/`PATH_VENUE_HEADER` (`lib/subdomain.ts`); `{slug}.turfly.xyz`
+(`resolveHost`) also still resolves, for any venue that does set up its own
+wildcard DNS later. Either way, resolution happens in `lib/request-venue.ts`'s
+`getRequestVenue()`, never in middleware itself (no database access there).
+The bare domain serves the marketing site and Venue Zero's booking pages.
+An unresolvable slug lands on `/booking-not-found`, NOT a thrown
+`notFound()` — see that file and `getRequestVenue()`'s doc comments for the
+Next.js hydration bug (rewrite + `notFound()`) that forced the workaround.
 
 `/select-venue` is where a staff member with more than one accessible venue
 and no `turfly_venue` cookie yet picks one — `/admin`'s layout redirects
@@ -356,7 +365,47 @@ bug, not just a missing convenience.
 **Not done yet:** owner-defined slot duration per field (explicit non-goal above); a
 field switcher on the admin dashboard/calendar/counter-booking form/blackouts (see
 above); the wildcard DNS record and Vercel wildcard domain that subdomain routing
-needs in production (README documents both).
+would need in production (README documents both) — not currently pursued, since
+path-based routing (`turfly.xyz/{slug}`, this section above) needs neither and is
+what the product actually links to today.
 
 **Explicit non-goals:** platform billing/Stripe, a real payment gateway, real-time push
 notifications, multi-region beyond `Asia/Dhaka`, owner-defined slot duration per field.
+
+**Path-based routing pass** (after the multi-field pass, same session): the DNS the
+subdomain scheme needs turned out to require delegating nameservers to Vercel, which
+the owner did not want (Cloudflare stays authoritative) — confirmed live by hand,
+`demo.turfly.xyz` does not resolve in production at all. `turfly.xyz/{slug}` became
+the primary scheme instead (`lib/subdomain.ts`'s `resolvePathSegment`/`venuePathUrl`,
+`middleware.ts`'s rewrite, `lib/request-venue.ts`'s three-tier resolution — see §7).
+Two real bugs found and fixed by testing against the live production database rather
+than trusting the design on paper:
+
+1. `holdSlotAction` (`app/actions/bookings.ts`) used to derive `venueId` from the
+   ambient request (host/cookie) at submit time. `PATH_VENUE_COOKIE` is shared across
+   every tab on the origin, so a customer with two different venues' booking pages
+   open in two tabs could have the second tab's visit silently redirect the first
+   tab's hold to the wrong tenant on submit. Fixed by deriving `venueId` from the
+   `Field` the customer actually clicked instead (a field belongs to exactly one
+   venue, unambiguous) — `lib/booking-engine.ts`'s existing "field belongs to that
+   venue" guard would have caught the mismatch and failed safely either way, but this
+   makes the hold just work instead of erroring in that edge case.
+2. An unresolvable path slug (a typo, an expired venue) calling `notFound()` from a
+   page reached via `middleware.ts`'s rewrite hits a genuine Next.js/Turbopack
+   hydration bug: the browser's address bar shows `/{slug}` while the actual page
+   rendered is `/book`'s, and the client router's reconciliation against that
+   mismatch never completes — a permanently blank page, in both `next dev` and a
+   production `next build && next start`, no console error. Fixed with a dedicated
+   `/booking-not-found` page reached via `redirect()` instead of `notFound()`
+   (`getRequestVenue()`'s doc comment has the full mechanism) — and that page had to
+   use the marketing header/footer, not `components/site`'s, because THOSE resolve a
+   venue too and would inherit the same stale cookie and redirect right back to
+   themselves. `PATH_VENUE_HEADER` (set only on the exact request middleware just
+   rewrote, never persisted) is what lets a stale `PATH_VENUE_COOKIE` fall through to
+   Venue Zero instead of erroring, rather than looping.
+
+The demo venue's own slug moved from `demo` (reserved — it collided with the `/demo`
+marketing route once path-based routing made the venue's slug a real URL segment) to
+`green-pitch-arena` (`scripts/rename-demo-venue-slug.ts`, `lib/demo.ts`'s
+`DEMO_VENUE_SLUG`) — `/demo` now links to it as "the public side" of the demo, so a
+prospect can see both the owner dashboard and the actual customer booking page.

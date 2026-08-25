@@ -32,7 +32,6 @@ import {
 } from '@/lib/schemas/booking';
 import { notifyBookingCancelled } from '@/lib/notify';
 import { clientIpFromHeaders, isRateLimited } from '@/lib/auth/rate-limit';
-import { getRequestVenueId } from '@/lib/request-venue';
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string };
 
@@ -83,10 +82,25 @@ export interface HoldSlotResult {
  * many-IP/many-phone-number abuse (see README §15). */
 export async function holdSlotAction(input: HoldSlotFormInput): Promise<ActionResult<HoldSlotResult>> {
   try {
-    // Resolved from the request host: dhanmondi.turfly.xyz books Dhanmondi's
-    // pitch, the bare domain still books Venue Zero. This is the line that
-    // makes one set of booking pages serve every tenant.
-    const venueId = await getRequestVenueId();
+    const parsed = holdSlotSchema.parse(input);
+
+    // venueId comes from the field the customer actually clicked — a field
+    // belongs to exactly one venue, so this is unambiguous — NOT from
+    // ambient request state (the host header, or PATH_VENUE_COOKIE under
+    // the path-based scheme). That matters because the cookie is shared
+    // across every tab on the origin: a customer with Dhanmondi's booking
+    // page open in one tab who opens Mirpur's in another has just
+    // overwritten the cookie out from under the first tab. holdSlot()
+    // would catch that mismatch anyway (lib/booking-engine.ts's "field does
+    // not belong to that venue" guard) and fail safely rather than book
+    // against the wrong tenant — but resolving it correctly here means the
+    // hold just works instead of failing with a confusing error in that
+    // edge case. See lib/subdomain.ts's PATH_VENUE_COOKIE doc comment.
+    const field = await prisma.field.findUnique({ where: { id: parsed.fieldId }, select: { venueId: true } });
+    if (!field) {
+      return { ok: false, error: 'This field is no longer available.', code: 'NOT_FOUND' };
+    }
+    const venueId = field.venueId;
 
     const ip = clientIpFromHeaders(await headers());
     // Rate-limit bucket is per venue as well as per IP. Sharing one bucket
@@ -95,7 +109,6 @@ export async function holdSlotAction(input: HoldSlotFormInput): Promise<ActionRe
     if (await isRateLimited(`hold:${venueId}:${ip}`)) {
       return { ok: false, error: 'Too many attempts. Please wait a while and try again.', code: 'RATE_LIMITED' };
     }
-    const parsed = holdSlotSchema.parse(input);
     const booking = await holdSlot({
       venueId,
       fieldId: parsed.fieldId,

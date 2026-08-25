@@ -10,7 +10,7 @@
 import { prisma } from '@/lib/prisma';
 import { requireRoleForPage } from '@/lib/auth/require-role-for-page';
 import { ROOT_DOMAIN } from '@/lib/request-venue';
-import { venueUrl } from '@/lib/subdomain';
+import { venuePathUrl } from '@/lib/subdomain';
 import { LogoUploadForm } from '@/components/admin/logo-upload-form';
 import { RemoveLogoButton } from '@/components/admin/remove-logo-button';
 import { BookingLink } from '@/components/admin/booking-link';
@@ -24,7 +24,7 @@ export default async function AdminBrandingPage() {
     select: { name: true, slug: true, logoUrl: true },
   });
 
-  const publicUrl = venueUrl(venue.slug, ROOT_DOMAIN);
+  const publicUrl = venuePathUrl(venue.slug, ROOT_DOMAIN);
 
   return (
     <div className="flex flex-col gap-10">

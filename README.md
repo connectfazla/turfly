@@ -328,8 +328,9 @@ verification, or cancel something already `CANCELLED`.
 
 ## 7. Route map
 
-Every public and staff route below works both on the bare domain (Venue Zero) and on
-`{slug}.$NEXT_PUBLIC_ROOT_DOMAIN` for any other venue — see §11's subdomain note. Staff roles are
+Every public and staff route below works both on the bare domain (Venue Zero) and, for any other
+venue, at `turfly.xyz/{slug}` (primary — no wildcard DNS needed) or `{slug}.$NEXT_PUBLIC_ROOT_DOMAIN`
+(if that venue has its own wildcard subdomain set up) — see §11's routing note. Staff roles are
 `OWNER | MANAGER | BOOKIE`, venue-scoped (`CLAUDE.md` §11); `requireRole()` / `requireRoleForPage()`
 enforce every row marked below, never just the sidebar hiding a link.
 
@@ -495,7 +496,7 @@ pnpm prisma:studio     # inspect the database visually
 ```
 DATABASE_URL                 Postgres — DIRECT connection string, not the pooled one (CLAUDE.md §10)
 NEXT_PUBLIC_SITE_URL          Used to build absolute links in auth emails
-NEXT_PUBLIC_ROOT_DOMAIN       Root domain for venue subdomains ({slug}.$THIS)
+NEXT_PUBLIC_ROOT_DOMAIN       Root domain — venues are served at $THIS/{slug} (primary) and {slug}.$THIS (if configured)
 LOOPS_API_KEY                 Transactional email (verify/reset/invite) — unset logs to console
 LOOPS_TXN_*                   One Loops transactionalId per auth-email kind — see lib/notifications/auth-email.ts
 RESEND_API_KEY                Booking-notification email; only read in production
@@ -595,25 +596,36 @@ The order this project's `BUILD_PLAN.md` recommends presenting it in (roughly tw
 
 The point to land: **correctness is enforced by the database, not by hope.**
 
-## Subdomain routing
+## Venue routing
 
-Every venue is served at `{slug}.turfly.xyz`. The booking pages keep ordinary
-paths — only the host distinguishes one venue from another
-(`lib/request-venue.ts`).
+Every venue is served at `turfly.xyz/{slug}` — path-based, and the primary
+scheme: it needs nothing beyond the one DNS record already pointing the bare
+domain at Vercel, so it works with any registrar/DNS provider kept as the
+authoritative nameserver, no NS delegation. `middleware.ts` rewrites
+`/{slug}/...` to the venue's ordinary, un-prefixed pages and resolution
+happens once, from a Server Component (`lib/request-venue.ts`'s
+`getRequestVenue()`) — see that file and `lib/subdomain.ts` for the full
+mechanism (and `CLAUDE.md` §11 for two real bugs the design went through
+before landing here).
 
-**Locally**, use `*.lvh.me`, which resolves to `127.0.0.1` publicly — no
-`/etc/hosts` editing and no wildcard DNS:
+**Locally**, path routing needs nothing extra:
 
 ```
-http://test-venue.lvh.me:3000/book
-http://localhost:3000/book          # the bare domain still serves Venue Zero
+http://localhost:3000/test-venue/book
+http://localhost:3000/book               # the bare domain still serves Venue Zero
 ```
 
-**In production** this needs two things done by hand, outside the codebase:
+`{slug}.turfly.xyz` (`resolveHost`) also resolves, for any venue that does
+set up its own wildcard subdomain — that needs two things done by hand,
+outside the codebase, and is NOT required for path routing to work:
 
-1. A wildcard DNS record — `*.turfly.xyz` — pointing at Vercel.
+1. A wildcard DNS record — `*.turfly.xyz` — pointing at Vercel (typically
+   means delegating nameservers to Vercel, for the automated wildcard TLS
+   cert renewal — check your DNS provider's own docs before doing this if
+   you want to keep it as your authoritative nameserver instead).
 2. `*.turfly.xyz` added as a domain in the Vercel project.
 
-Set `NEXT_PUBLIC_ROOT_DOMAIN` to the deployment's own domain. Until the
-wildcard exists, venues are still fully usable at the bare domain; they just
-do not have their own address yet.
+Locally, `*.lvh.me` (resolves to `127.0.0.1` publicly, no `/etc/hosts`
+editing) exercises this scheme specifically: `http://test-venue.lvh.me:3000/book`.
+
+Set `NEXT_PUBLIC_ROOT_DOMAIN` to the deployment's own domain either way.

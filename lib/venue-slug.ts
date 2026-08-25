@@ -1,29 +1,41 @@
 /**
  * Venue slug and venue-code rules.
  *
- * The slug becomes a subdomain (`{slug}.turfly.xyz`) and the code is folded
- * into every booking reference (`TRF-{code}-2026-0001`), so both are effectively
- * permanent from the owner's first booking onward — validation here is the last
- * cheap moment to get them right.
+ * The slug is the venue's public address: `turfly.xyz/{slug}` (path-based —
+ * see lib/subdomain.ts's `resolvePathSegment`/`venuePathUrl`, the primary
+ * scheme, since wildcard subdomain DNS is not configured on the real
+ * deployment). `{slug}.turfly.xyz` is also resolved (`resolveHost`) for any
+ * venue that does set up its own wildcard cert later, so both must stay
+ * collision-free with every real platform route. The code is folded into
+ * every booking reference (`TRF-{code}-2026-0001`), so both are effectively
+ * permanent from the owner's first booking onward — validation here is the
+ * last cheap moment to get them right.
  */
 
 /**
  * Reserved slugs. Two separate reasons, both real:
  *
- *  - Routing collisions: a venue at `admin.turfly.xyz` or `api.turfly.xyz`
- *    would shadow a platform surface once subdomain routing ships.
+ *  - Routing collisions: a venue slug is also a first path segment
+ *    (`turfly.xyz/{slug}`, see lib/subdomain.ts's `resolvePathSegment`) and,
+ *    for any venue with its own wildcard DNS, a subdomain too. Either one
+ *    reusing a real platform route (`/admin`, `/api`, ...) would shadow it.
+ *    Exported so middleware can reuse the exact same set rather than a
+ *    second list that could drift.
  *  - Impersonation: `mail`, `accounts`, `support`, `billing`, `help`,
- *    `secure`, `login` are the subdomains a phishing page wants. A tenant is
+ *    `secure`, `login` are the names a phishing page wants. A tenant is
  *    a stranger who redeemed a code; do not hand them a name customers read
  *    as "this is Turfly itself".
  */
-const RESERVED_SLUGS = new Set([
-  // platform routing
+export const RESERVED_SLUGS = new Set([
+  // platform routing — every top-level app/ route, so a venue slug can never
+  // shadow one, whether reached by path or by subdomain.
   'www', 'app', 'admin', 'api', 'dashboard', 'super-admin', 'onboarding',
   'sign-in', 'sign-up', 'book', 'booking', 'rules', 'status', 'default',
   'static', 'assets', 'cdn', 'clerk', 'preview', 'staging', 'test', 'demo',
+  'accept-invite', 'actions', 'forgot-password', 'reset-password',
+  'select-venue', 'verify-email', 'login', 'booking-not-found',
   // impersonation risk
-  'mail', 'email', 'accounts', 'account', 'login', 'secure', 'security',
+  'mail', 'email', 'accounts', 'account', 'secure', 'security',
   'support', 'help', 'billing', 'pay', 'payment', 'payments', 'verify',
   'official', 'turfly',
   // ordinary marketing surfaces we may want later
@@ -33,10 +45,19 @@ const RESERVED_SLUGS = new Set([
 /**
  * Must start with a letter, end alphanumeric, 3-32 chars, lowercase letters,
  * digits and single hyphens between. Starting with a letter keeps it a valid
- * DNS label; no leading/trailing hyphen and no doubled hyphen keeps it
+ * DNS label (still relevant for the subdomain scheme) and a valid path
+ * segment; no leading/trailing hyphen and no doubled hyphen keeps it
  * readable and avoids the `xn--` punycode prefix shape.
  */
 const SLUG_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+
+/** Shape-only check (length + character rules), no reserved-word check —
+ * lib/subdomain.ts's `resolvePathSegment` uses this to decide whether an
+ * unrecognised first path segment is even plausibly a venue slug before
+ * paying for the rewrite + cookie + database lookup. */
+export function looksLikeSlug(candidate: string): boolean {
+  return candidate.length >= 3 && candidate.length <= 32 && SLUG_RE.test(candidate);
+}
 
 export class InvalidSlugError extends Error {
   constructor(message: string) {

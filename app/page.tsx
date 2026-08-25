@@ -2,8 +2,9 @@
  * ROUTE: / (home) — public, no login. The PRODUCT marketing site.
  *
  * Audience: turf owners, not players. Turfly is sold to the people who run
- * the pitch; players reach their own venue's booking pages, which live on
- * that venue's subdomain. This page used to be a booking page for the single
+ * the pitch; players reach their own venue's booking pages, at
+ * turfly.xyz/{slug} (lib/subdomain.ts's path scheme — no wildcard DNS
+ * needed). This page used to be a booking page for the single
  * pre-SaaS venue — that framing stopped being right the moment the product
  * grew tenants and registration codes. A small "Players" path is kept in the
  * footer and in the hero for anyone who lands here by mistake.
@@ -216,7 +217,7 @@ const PRICING = {
   monthlyFee: 4499,
   includes: [
     'Unlimited fields and sports on your venue',
-    'Your own booking link on your own subdomain',
+    'Your own booking link — turfly.xyz/your-turf',
     'Owner, Manager and Bookie accounts with role-scoped access',
     'Full control over pricing and which slots are open, per field',
     'Hosting, updates and support for as long as you subscribe',

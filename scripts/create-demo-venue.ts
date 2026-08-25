@@ -33,7 +33,9 @@ import { seedSlotRulesForVenue, SLOT_RULES_PER_VENUE } from '../lib/provisioning
 
 const prisma = new PrismaClient();
 
-const DEMO_VENUE_SLUG = 'demo';
+// Must match lib/demo.ts's DEMO_VENUE_SLUG exactly — see that file's
+// comment for why this is NOT the reserved word `demo`.
+const DEMO_VENUE_SLUG = 'green-pitch-arena';
 const DEMO_VENUE_CODE = 'DEMO';
 const DEMO_TENANT_NAME = 'Demo Sports Ltd.';
 const DEMO_VENUE_NAME = 'Green Pitch Arena';

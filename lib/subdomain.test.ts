@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveHost, venueUrl } from './subdomain';
+import { resolveHost, resolvePathSegment, venuePathUrl, venueUrl } from './subdomain';
 
 const ROOT = 'turfly.xyz';
 
@@ -57,7 +57,49 @@ describe('resolveHost', () => {
 });
 
 describe('venueUrl', () => {
-  it('builds the public booking address', () => {
+  it('builds the subdomain-scheme address', () => {
     expect(venueUrl('dhanmondi', ROOT)).toBe('https://dhanmondi.turfly.xyz');
+  });
+});
+
+describe('venuePathUrl', () => {
+  it('builds the path-scheme address — the one the product actually links to', () => {
+    expect(venuePathUrl('dhanmondi', ROOT)).toBe('https://turfly.xyz/dhanmondi');
+  });
+});
+
+describe('resolvePathSegment', () => {
+  it('resolves a first path segment as a candidate venue slug', () => {
+    expect(resolvePathSegment('/dhanmondi/book/2026-08-27')).toEqual({
+      slug: 'dhanmondi',
+      rest: '/book/2026-08-27',
+    });
+  });
+
+  it('maps a bare `/{slug}` to an empty rest, for the caller to default to /book', () => {
+    expect(resolvePathSegment('/dhanmondi')).toEqual({ slug: 'dhanmondi', rest: '' });
+  });
+
+  it('never treats a reserved platform route as a venue slug', () => {
+    for (const p of ['/admin', '/admin/pricing', '/api/availability', '/book', '/sign-in', '/rules', '/demo']) {
+      expect(resolvePathSegment(p)).toBeNull();
+    }
+  });
+
+  it('treats the root path as the platform, not a venue', () => {
+    expect(resolvePathSegment('/')).toBeNull();
+  });
+
+  it('refuses a segment that fails the slug shape rules', () => {
+    expect(resolvePathSegment('/ab')).toBeNull(); // too short
+    expect(resolvePathSegment('/Has-Caps')).toBeNull();
+    expect(resolvePathSegment('/-leading-hyphen')).toBeNull();
+  });
+
+  it('preserves a deeper path unchanged after stripping the slug', () => {
+    expect(resolvePathSegment('/dhanmondi/booking/lookup')).toEqual({
+      slug: 'dhanmondi',
+      rest: '/booking/lookup',
+    });
   });
 });

@@ -6,7 +6,7 @@ import { getVenueName, getVenueSetting } from '@/lib/venue';
 import { requireRole } from '@/lib/auth/require-role';
 import { VenueNotSelectedError, accessibleVenueIds } from '@/lib/auth/active-venue';
 import { ROOT_DOMAIN } from '@/lib/request-venue';
-import { venueUrl } from '@/lib/subdomain';
+import { venuePathUrl } from '@/lib/subdomain';
 import { signOutAction } from '@/app/actions/auth';
 import { SidebarNav } from '@/components/admin/sidebar-nav';
 import { BookingLink } from '@/components/admin/booking-link';
@@ -111,7 +111,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // query, and it's the one place that also has the slug for the booking
   // link below.
   const venue = await getVenueSetting(staff.venueId);
-  const bookingUrl = venue ? venueUrl(venue.slug, ROOT_DOMAIN) : null;
+  const bookingUrl = venue ? venuePathUrl(venue.slug, ROOT_DOMAIN) : null;
   // One cheap lookup, not carried on StaffUser itself — this is display-only
   // (which banner to show), never an authorization input. See lib/demo.ts's
   // header comment on why nothing security-relevant is keyed off it here.
