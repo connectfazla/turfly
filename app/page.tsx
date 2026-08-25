@@ -15,11 +15,21 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import Image from 'next/image';
-import { CalendarCheck, ShieldCheck, Wallet, Users2, ClipboardList, TrendingUp } from 'lucide-react';
+import {
+  CalendarCheck,
+  ShieldCheck,
+  Wallet,
+  Users2,
+  ClipboardList,
+  TrendingUp,
+  LayoutGrid,
+  Check,
+} from 'lucide-react';
 import { MarketingHeader } from '@/components/marketing/marketing-header';
 import { MarketingFooter } from '@/components/marketing/marketing-footer';
 import { Eyebrow } from '@/components/marketing/eyebrow';
 import { PillButton } from '@/components/marketing/pill-button';
+import { formatBDT } from '@/lib/format';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://turfly.xyz';
 const TITLE = 'Turfly — turf booking software for Bangladesh';
@@ -114,9 +124,28 @@ const JSON_LD = {
             text: 'Turfly is invite-only. Request an invite and we send a registration code; that code creates your business and your first venue.',
           },
         },
+        {
+          '@type': 'Question',
+          name: 'How much does Turfly cost?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'A one-time setup fee of BDT 9,999, then BDT 4,499 a month for the license, hosting, updates and support. No per-booking cut and no separate tiers to compare.',
+          },
+        },
       ],
     },
   ],
+};
+
+/** Called out on its own, above the regular feature grid, rather than
+ * squeezed in as a seventh equal card — this is the one capability the
+ * pricing section below is built around, so it gets the same weight as the
+ * pitch itself, not a footnote. */
+const HEADLINE_FEATURE = {
+  icon: LayoutGrid,
+  title: 'One venue, every field you run',
+  body: 'Football pitches, a badminton court, whatever else is on the property — add each as its own field with its own price grid and its own open slots. One dashboard, one login, one bill.',
+  sports: ['Football', 'Badminton', 'Cricket nets', 'Futsal'],
 };
 
 const FEATURES = [
@@ -178,6 +207,21 @@ const STEPS = [
     body: 'Share your booking link. Bookings arrive online and at the counter, and your staff work the day view from a tablet.',
   },
 ];
+
+/** One plan, not a tiered table — there is only one thing to buy. Figures
+ * match the FAQPage answer above and lib/format.ts's formatBDT(), the same
+ * currency formatter every other BDT figure in the app uses. */
+const PRICING = {
+  setupFee: 9999,
+  monthlyFee: 4499,
+  includes: [
+    'Unlimited fields and sports on your venue',
+    'Your own booking link on your own subdomain',
+    'Owner, Manager and Bookie accounts with role-scoped access',
+    'Full control over pricing and which slots are open, per field',
+    'Hosting, updates and support for as long as you subscribe',
+  ],
+};
 
 const FAQS = JSON_LD['@graph'][1]!.mainEntity!;
 
@@ -279,7 +323,34 @@ export default function HomePage() {
             </p>
           </div>
 
-          <ul className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* Full-width, ahead of the equal-card grid below — the multi-field
+           * capability the pricing section is built around gets its own
+           * weight rather than competing as a seventh identical card. */}
+          <div className="mt-12 flex flex-col gap-5 rounded-(--radius-marketing-sm) border border-accent/25 bg-accent-soft/30 p-6 sm:flex-row sm:items-start sm:gap-6 sm:p-8">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-surface text-accent">
+              <HEADLINE_FEATURE.icon className="size-5" strokeWidth={2} aria-hidden="true" />
+            </span>
+            <div className="flex flex-col gap-3">
+              <div>
+                <h3 className="text-subheading text-text">{HEADLINE_FEATURE.title}</h3>
+                <p className="mt-1 max-w-[58ch] text-caption leading-relaxed text-text-muted">
+                  {HEADLINE_FEATURE.body}
+                </p>
+              </div>
+              <ul className="flex flex-wrap gap-2">
+                {HEADLINE_FEATURE.sports.map((sport) => (
+                  <li
+                    key={sport}
+                    className="rounded-full border border-border bg-surface px-3 py-1 text-caption text-text-muted"
+                  >
+                    {sport}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <ul className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {FEATURES.map(({ icon: Icon, title, body }) => (
               <li
                 key={title}
@@ -317,6 +388,67 @@ export default function HomePage() {
                 </li>
               ))}
             </ol>
+          </div>
+        </section>
+
+        {/* -------------------------------------------------------- pricing
+          * One plan, so this is one card, not a three-tower table with two
+          * decoy columns. The two prices reuse the hero's own
+          * text-display/tabular-nums treatment for its STATS row, so the
+          * numbers that matter here read with the same weight as the
+          * numbers that opened the page, rather than a new visual language
+          * invented just for this section. */}
+        <section id="pricing" aria-labelledby="pricing-heading" className="border-y border-border bg-surface-muted">
+          <div className="mx-auto max-w-[1120px] px-4 py-20 sm:py-28">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <Eyebrow>Pricing</Eyebrow>
+              <h2 id="pricing-heading" className="max-w-[20ch] text-display text-balance text-text">
+                One setup fee, one monthly number
+              </h2>
+              <p className="max-w-[54ch] text-body text-text-muted">
+                No per-booking cut, no tiers to compare. What you pay to launch, and what you pay to keep it running.
+              </p>
+            </div>
+
+            <div className="mx-auto mt-12 max-w-[860px] overflow-hidden rounded-(--radius-marketing) border border-border bg-surface">
+              <div className="grid gap-8 p-8 sm:grid-cols-2 sm:gap-10 sm:p-10">
+                <div className="flex flex-col justify-center gap-6 sm:border-r sm:border-border sm:pr-10">
+                  <div>
+                    <dl>
+                      <dt className="text-caption text-text-muted">One-time, at setup</dt>
+                      <dd className="text-display tabular-nums text-text sm:text-hero sm:leading-[1.1]">
+                        {formatBDT(PRICING.setupFee)}
+                      </dd>
+                    </dl>
+                  </div>
+                  <div>
+                    <dl>
+                      <dt className="text-caption text-text-muted">Then, every month</dt>
+                      <dd className="text-display tabular-nums text-text sm:text-hero sm:leading-[1.1]">
+                        {formatBDT(PRICING.monthlyFee)}
+                      </dd>
+                    </dl>
+                  </div>
+                </div>
+
+                <div className="flex flex-col justify-center gap-4">
+                  <ul className="flex flex-col gap-3">
+                    {PRICING.includes.map((item) => (
+                      <li key={item} className="flex items-start gap-2.5 text-caption text-text-muted">
+                        <Check className="mt-0.5 size-4 shrink-0 text-accent" strokeWidth={2.5} aria-hidden="true" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              <div className="flex justify-center border-t border-border bg-surface-muted px-8 py-6">
+                <PillButton href="/sign-up" variant="solid">
+                  Start with your code
+                </PillButton>
+              </div>
+            </div>
           </div>
         </section>
 
